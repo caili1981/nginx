@@ -61,7 +61,20 @@
 
 
 /* unused                                  1 */
+/*
+ * 默认子请求的输出是直接返回给客户端的，
+ * 如果不想返回输出，需要设置NGX_HTTP_SUBREQUEST_IN_MEMORY标志。
+ * 注意，不是所有Handler模块都支持此标志，
+ * 比如fastcgi模块不支持，proxy模块支持。
+ * 注意, IN_MEMORY最多只能保存一个buffer的内容，如果需要buffer的内容过多，
+ * 则需要自己保存.
+ */
 #define NGX_HTTP_SUBREQUEST_IN_MEMORY      2
+
+/*
+ * 子请求完成后会设置自己的r->done标志位，
+ * 可以通过判断标志位得知子请求是否完成。
+ */
 #define NGX_HTTP_SUBREQUEST_WAITED         4
 #define NGX_HTTP_SUBREQUEST_CLONE          8
 #define NGX_HTTP_SUBREQUEST_BACKGROUND     16
@@ -179,6 +192,7 @@ typedef struct {
 
 
 typedef struct {
+    /* 整个headers的链表, 后续的（如:host)都是这个链表的成员 */
     ngx_list_t                        headers;
 
     ngx_table_elt_t                  *host;
@@ -189,6 +203,10 @@ typedef struct {
     ngx_table_elt_t                  *if_none_match;
     ngx_table_elt_t                  *user_agent;
     ngx_table_elt_t                  *referer;
+    /* 
+       content_length 指的是未经处理的字符串, 
+       content_length_n 指的是经过处理的整数
+      */
     ngx_table_elt_t                  *content_length;
     ngx_table_elt_t                  *content_range;
     ngx_table_elt_t                  *content_type;
@@ -293,14 +311,23 @@ typedef void (*ngx_http_client_body_handler_pt)(ngx_http_request_t *r);
 
 typedef struct {
     ngx_temp_file_t                  *temp_file;
+    /* 如果在内存中，一片buf无法接收时，需要用buf chain */
     ngx_chain_t                      *bufs;
+    /* 直接接收的包体缓存 */
     ngx_buf_t                        *buf;
+    /* 根据content-length, 计算仍需要接收的长度 */
     off_t                             rest;
     off_t                             received;
+
+    /* 已经处理完的buf list */
     ngx_chain_t                      *free;
+
+    /* 尚未处理完的buf list */
     ngx_chain_t                      *busy;
     ngx_http_chunked_t               *chunked;
+    /* 接收完之后的回调函数 */
     ngx_http_client_body_handler_pt   post_handler;
+
 } ngx_http_request_body_t;
 
 
@@ -342,6 +369,7 @@ typedef ngx_int_t (*ngx_http_post_subrequest_pt)(ngx_http_request_t *r,
     void *data, ngx_int_t rc);
 
 typedef struct {
+    /* subrequest 完成时的回调函数 */
     ngx_http_post_subrequest_pt       handler;
     void                             *data;
 } ngx_http_post_subrequest_t;
@@ -367,17 +395,25 @@ struct ngx_http_posted_request_s {
 typedef ngx_int_t (*ngx_http_handler_pt)(ngx_http_request_t *r);
 typedef void (*ngx_http_event_handler_pt)(ngx_http_request_t *r);
 
-
+/* 重要！！！ngx_http_request_t 是整个http处理的核心数据结构 */
 struct ngx_http_request_s {
     uint32_t                          signature;         /* "HTTP" */
 
+    /*
+     * ngx服务器的一个tcp连接, 在ngx_connection_t 内部区分是
+     * http还是其他连接
+     */
     ngx_connection_t                 *connection;
 
+    /* 保存每个模块的临时参数/变量, 这个变量只在此http request的生命周期内有效 */
     void                            **ctx;
+
+    /* 从loc继承下来的静态配置 */
     void                            **main_conf;
     void                            **srv_conf;
     void                            **loc_conf;
 
+    /*  供request handler状态的恢复 ngx_http_request_handler */
     ngx_http_event_handler_pt         read_event_handler;
     ngx_http_event_handler_pt         write_event_handler;
 
@@ -385,47 +421,117 @@ struct ngx_http_request_s {
     ngx_http_cache_t                 *cache;
 #endif
 
+    /* 由upstream相关模块创建, 并设立upstream 内响应的各个阶段的handler/filter */
     ngx_http_upstream_t              *upstream;
     ngx_array_t                      *upstream_states;
                                          /* of ngx_http_upstream_state_t */
 
+    /*
+     * memory pool, ngx_http_create_request里进行创建,
+     * 这个pool用于这个request的生命周期 
+     */
     ngx_pool_t                       *pool;
+
+    /* 
+     * header_in: 未经处理过的原始报文头
+     * headers_in: 经过处理后的报文头，每一个首部都已经解析出来
+     * header_in: 如果解析头部时，多读了，header_in也会保存一部分body的内容，
+     */
     ngx_buf_t                        *header_in;
 
+    /* 保存很多 HTTP 首部信息， 例如content lenght, if modified since 等等*/
     ngx_http_headers_in_t             headers_in;
+
+    /*
+     * ngx_http_header_filter会根据headers_out进行编码，并返回响应信息给客户端
+     */
     ngx_http_headers_out_t            headers_out;
 
+    /* ????为什么在http_core_handler时，它的值为0 */
     ngx_http_request_body_t          *request_body;
 
     time_t                            lingering_time;
+
+    /* 供限速使用 */
     time_t                            start_sec;
     ngx_msec_t                        start_msec;
 
+    /* NGX_HTTP_GET/NGX_HTTP_HEAD ...*/
     ngx_uint_t                        method;
+
+    /* NGX_HTTP_VERSION_9/NGX_HTTP_VERSION_10/NGX_HTTP_VERSION_11/NGX_HTTP_VERSION_20 */
     ngx_uint_t                        http_version;
 
+    /* GET .../PUT ..  /index.html HTTP1.1 */
     ngx_str_t                         request_line;
+    /* /index.html HTTP1.1*/
     ngx_str_t                         uri;
+    /* uri 里的参数 */
     ngx_str_t                         args;
+    /* ??? */
     ngx_str_t                         exten;
     ngx_str_t                         unparsed_uri;
 
+    /* PUT /hello_world HTTP/1.1\r\nHost */
     ngx_str_t                         method_name;
+    /* HTTP/1.1\r\nHost */
     ngx_str_t                         http_protocol;
     ngx_str_t                         schema;
 
+    /* output buffer, header/body都通过这个字段出去, 为什么没有last字段？？这样的后果是在前面添加性能比较好 */
     ngx_chain_t                      *out;
+
+    /* 
+     * 主请求, 通过这个域能判断当前request是不是主请求, 
+     *  如: r->main == r 
+     */
     ngx_http_request_t               *main;
+    /* 
+     * 当前request的父request, 如果当前为main, 那么parent = NULL,
+     * 注意: 父请求不一定等于main.
+     */
     ngx_http_request_t               *parent;
+    /* 同一个父request 下的所有子请求会通过posntponed链接成一个链表 */
     ngx_http_postponed_request_t     *postponed;
+    /*
+     * 回调函数, 以及回调函数所需要的数据, 此回调函数在finalize时会调用 
+     * 当前请求数据处理完成之后会调用post_subrequest，通知主请求
+     */
     ngx_http_post_subrequest_t       *post_subrequest;
+    /* 
+     * 已经完成的请求链表，但是仍未发送数据
+     * 如果不存放在posted_request里，将再无事件进行驱动 
+     * 添加: ngx_http_subrequest->ngx_http_post_request会往请求的r->main->posted_requests里添加请求
+     * 移除: ngx_http_run_posted_requests.
+     */
     ngx_http_posted_request_t        *posted_requests;
 
+    /*
+     * posted_requests/postponed 个人理解
+     * posted_requests是指已经创建，但是尚未发送的子请求.  (ngx_http_subrequest里调用).
+     * 当发送数据完毕，也就不需要保存.
+     * 只有main request有posted_requests, 因为所有子请求发送出去就好，无需关心先后.
+     * postponed 是指延迟处理的子请求，例如，如有多个子请求，
+     * 第二个子请求先到。那么需要将接收到的数据buffer住。
+     * 只有当接收的数据已经被处理完成(即发送回客户端)才会在postponed移除.
+     * 每个request都有自己的postponed request, 需要保存子请求的隶属关系.
+     */
+ 
+    /* 当前ngx_http_handler时会进入phases engine, phase_handler表明当前处于哪一个phase */
     ngx_int_t                         phase_handler;
+
+    /* 
+     * 从ngx_http_core_conf_t->handler获得，可以在自己的模块重置,
+     * 如：ngx_http_proxy_module 就把 ngx_http_proxy_handler替换默认的handler
+     */
     ngx_http_handler_pt               content_handler;
     ngx_uint_t                        access_code;
 
-    ngx_http_variable_value_t        *variables;
+    /* 
+     * http 请求的变量值, ngx_http_create_request函数里进行创建，
+     * 其长度是core main config里决定的 
+     */
+   ngx_http_variable_value_t        *variables;
 
 #if (NGX_PCRE)
     ngx_uint_t                        ncaptures;
@@ -439,18 +545,21 @@ struct ngx_http_request_s {
     /* used to learn the Apache compatible response length without a header */
     size_t                            header_size;
 
+    /* 全部长度，包括header和body */
     off_t                             request_length;
 
     ngx_uint_t                        err_status;
 
+    /* ngx_http_create_request 里进行创建 */
     ngx_http_connection_t            *http_connection;
     ngx_http_v2_stream_t             *stream;
 
     ngx_http_log_handler_pt           log_handler;
 
+    /* 如果请求打开了某些资源，需要在结束时释放，需要添加cleanup, 它是一个链表 */
     ngx_http_cleanup_t               *cleanup;
 
-    unsigned                          count:16;
+    unsigned                          count:16;  /* 引用计数 */
     unsigned                          subrequests:8;
     unsigned                          blocked:8;
 
@@ -476,10 +585,13 @@ struct ngx_http_request_s {
     unsigned                          valid_location:1;
     unsigned                          valid_unparsed_uri:1;
     unsigned                          uri_changed:1;
-    unsigned                          uri_changes:4;
+    unsigned                          uri_changes:4; /* rewrite URL 的次数 */
 
+    /* 所有request_body 放在一个buf里, 例如naxsi, waf的内容检查就可以因此而减少copy*/
     unsigned                          request_body_in_single_buf:1;
+    /* request body 放在文件里 */
     unsigned                          request_body_in_file_only:1;
+    /* 放入永久存储区，而不是临时文件 */
     unsigned                          request_body_in_persistent_file:1;
     unsigned                          request_body_in_clean_file:1;
     unsigned                          request_body_file_group_access:1;
@@ -524,22 +636,35 @@ struct ngx_http_request_s {
     unsigned                          header_only:1;
     unsigned                          expect_trailers:1;
     unsigned                          keepalive:1;
+    /* 延时关闭标志。例如，在处理完包头时，如果发现包体不为空，则会设置此标记1，放弃处理包体，则设置为0 */
+    /* 延迟关闭的原因是: 
+     * 正常情况下, tcp 协议栈在关闭时，会清空send_buf.
+     * 但是如果此时recv_buf里有数据没处理, 此时仍然收到对方发送数据时，会发送rst.
+     * 如果rst在send_buf清空完之前发送到client，会造成client并没有接收完server的
+     * err_msg。导致连接异常.
+     * 延迟关闭，就是关闭单向连接，接收可以继续, 但是发送已经完成. 在一定时延后，再关闭整个tcp连接.
+     */
     unsigned                          lingering_close:1;
     unsigned                          discard_body:1;
     unsigned                          reading_body:1;
-    unsigned                          internal:1;
+    unsigned                          internal:1;  /* 是否是内部请求，例如subrequest */
     unsigned                          error_page:1;
     unsigned                          filter_finalize:1;
     unsigned                          post_action:1;
     unsigned                          request_complete:1;
     unsigned                          request_output:1;
+    /*
+     * 在sub_request的时候，如果parent的header没有发送，那么会将此
+     * sub_request的header发送给parent, header_sent标志是用来表示header
+     * 是否之前已经发过
+     */
     unsigned                          header_sent:1;
     unsigned                          expect_tested:1;
     unsigned                          root_tested:1;
     unsigned                          done:1;
     unsigned                          logged:1;
 
-    unsigned                          buffered:4;
+    unsigned                          buffered:4; /* 是否有待发送的报文 */
 
     unsigned                          main_filter_need_in_memory:1;
     unsigned                          filter_need_in_memory:1;
@@ -560,6 +685,7 @@ struct ngx_http_request_s {
 
     ngx_uint_t                        state;
 
+    /* 根据http报文头算出的hash值, proxy 模块用它来寻找handler */
     ngx_uint_t                        header_hash;
     ngx_uint_t                        lowcase_index;
     u_char                            lowcase_header[NGX_HTTP_LC_HEADER_LEN];
@@ -574,6 +700,10 @@ struct ngx_http_request_s {
      * via ngx_http_ephemeral_t
      */
 
+    /* 
+     * uri_start 和 uri_end 用来表示uri的位置, 
+     * 这个值和uri指向的buf一致, 是pool创建出来的.
+     */
     u_char                           *uri_start;
     u_char                           *uri_end;
     u_char                           *uri_ext;

@@ -274,7 +274,8 @@ ngx_http_limit_req_handler(ngx_http_request_t *r)
         return NGX_HTTP_INTERNAL_SERVER_ERROR;
     }
 
-    r->read_event_handler = ngx_http_test_reading;
+    /* 测试客户端是不是已经关闭连接 */
+    r->read_event_handler = ngx_http_test_reading; 
     r->write_event_handler = ngx_http_limit_req_delay;
 
     r->connection->write->delayed = 1;
@@ -309,7 +310,8 @@ ngx_http_limit_req_delay(ngx_http_request_t *r)
     }
 
     r->read_event_handler = ngx_http_block_reading;
-    r->write_event_handler = ngx_http_core_run_phases;
+    /* delay 完之后继续处理, block read */
+    r->write_event_handler = ngx_http_core_run_phases;  
 
     ngx_http_core_run_phases(r);
 }

@@ -27,8 +27,11 @@ typedef ngx_int_t (*ngx_http_get_variable_pt) (ngx_http_request_t *r,
 
 
 #define NGX_HTTP_VAR_CHANGEABLE   1
+/* 不直接返回缓存的值，每次都要去取值 */
 #define NGX_HTTP_VAR_NOCACHEABLE  2
+/* 变量使用索引读取 */
 #define NGX_HTTP_VAR_INDEXED      4
+/* 变量不需要被hash */
 #define NGX_HTTP_VAR_NOHASH       8
 #define NGX_HTTP_VAR_WEAK         16
 #define NGX_HTTP_VAR_PREFIX       32
@@ -36,6 +39,10 @@ typedef ngx_int_t (*ngx_http_get_variable_pt) (ngx_http_request_t *r,
 
 struct ngx_http_variable_s {
     ngx_str_t                     name;   /* must be first to build the hash */
+
+    /*
+     * set_handler只有使用'set' 脚本时才会用到.
+     */
     ngx_http_set_variable_pt      set_handler;
     ngx_http_get_variable_pt      get_handler;
     uintptr_t                     data;

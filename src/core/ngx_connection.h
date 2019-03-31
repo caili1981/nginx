@@ -120,9 +120,37 @@ typedef enum {
 #define NGX_SSL_BUFFERED       0x01
 #define NGX_HTTP_V2_BUFFERED   0x02
 
-
+/*
+ * 一个connection代表一个连接, 每个连接都有自己的read/write event.
+ * 1. 普通连接, 一个connection就够.
+ * 2. upstream, 和客户端一个连接，和upstream->peer一个连接.
+ *    在upstream时，会创建一个新的连接(ngx_get_connection), 并将连接加入到event队列中.
+ *    upstream如果有响应时（如：连接成功)，会调用此upstream的处理回调函数ngx_http_upstream_handler
+ *    然后内部继续调用upstream的write_event_handler(ngx_http_upstream_send_request_handler)
+ * 3. subrequest, 和客户端一个连接，和每个sub-upstream一个连接.
+ * 4. 事件的恢复顺序(upstream举例).
+ *        ngx_http_upstream_connect/ngx_event_connect_peer/ngx_get_connection 将读写事件加入到事件列表中.
+ *        ngx_epoll_process_events  ===> 有可读或者可写的事件时
+ *            rev/wev->handler(ngx_http_upstream_handler)
+ *               ngx_http_upstream_handler
+ *                 ev->data(request)->upstream->write_event_handler/read_event_handler
+ */
 struct ngx_connection_s {
-    void               *data;
+    /*
+       1.  ngx_cycle->free_connections 里用data作为next指针，连接一个free链表 
+       2.  在建立好http连接之后data指向ngx_http_connection_t.
+       3.  在wait request(ngx_http_create_request)之后，指向ngx_http_request_t
+       4.  当有subrequest时，指向active的subrequest
+     */
+    void               *data;  
+
+    /*
+     * read/event event的handler在发现ngx_http_process_request之后，
+     * 就变成了ngx_http_request_handler,
+     * 例如在ngx_http_read_client_request_body 之后，如果发现recv无法获取信息，则
+     * 将read event加入到监听队列中，它的handler就写ngx_http_request_handler,
+     * 而ngx_http_request_handler会再次调用响应的read函数read_event_handler
+     */
     ngx_event_t        *read;
     ngx_event_t        *write;
 
@@ -165,6 +193,10 @@ struct ngx_connection_s {
 
     ngx_atomic_uint_t   number;
 
+    /* 
+     * 使用keepalive模块时，peer connection会被复用, 
+     * requests表示它被复用的次数
+     */
     ngx_uint_t          requests;
 
     unsigned            buffered:8;
@@ -173,7 +205,7 @@ struct ngx_connection_s {
 
     unsigned            timedout:1;
     unsigned            error:1;
-    unsigned            destroyed:1;
+    unsigned            destroyed:1;   /* 标志连接是否已经被销毁 */
 
     unsigned            idle:1;
     unsigned            reusable:1;

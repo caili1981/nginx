@@ -1136,7 +1136,12 @@ inclusive:
     return node;
 }
 
-
+/* 
+ * 和ngx_http_add_listening的区别是: 
+ * 1. listen, 只是加到待监听队列.
+ * 2. open_listening, 创建套接字.
+ * 3. configure_listening, 配置套接字并开始监听. 
+ */
 ngx_int_t
 ngx_http_add_listen(ngx_conf_t *cf, ngx_http_core_srv_conf_t *cscf,
     ngx_http_listen_opt_t *lsopt)
@@ -1710,6 +1715,13 @@ ngx_http_add_listening(ngx_conf_t *cf, ngx_http_conf_addr_t *addr)
 
     ls->addr_ntop = 1;
 
+    /*
+     *  connection代表tcp连接
+     *  1. 当连接是http协议时，会创建http 连接ngx_http_init_connection.
+     *     创建ngx_http_connection_t结构, 存入connection->data.
+     *  2. 当连接时mail协议时，会创建ngx_mail_init_connection.
+     *  3. 当连接是stream时，创建ngx_stream_init_connection.
+     */
     ls->handler = ngx_http_init_connection;
 
     cscf = addr->default_server;

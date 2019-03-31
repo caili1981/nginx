@@ -107,10 +107,10 @@ typedef struct {
 typedef enum {
     NGX_HTTP_POST_READ_PHASE = 0,
 
-    NGX_HTTP_SERVER_REWRITE_PHASE,
+    NGX_HTTP_SERVER_REWRITE_PHASE,   /* server块中的rewrite */
 
     NGX_HTTP_FIND_CONFIG_PHASE,
-    NGX_HTTP_REWRITE_PHASE,
+    NGX_HTTP_REWRITE_PHASE,   /* location块中的rewrite */
     NGX_HTTP_POST_REWRITE_PHASE,
 
     NGX_HTTP_PREACCESS_PHASE,
@@ -132,6 +132,10 @@ typedef ngx_int_t (*ngx_http_phase_handler_pt)(ngx_http_request_t *r,
 
 struct ngx_http_phase_handler_s {
     ngx_http_phase_handler_pt  checker;
+    /* 返回值非常关键: 
+       1.   如果返回NGX_DECLINED, 则继续进行下一个handler 
+       2.   如果返回NGX_OK, 则跳过当前phase，进行下一个phase
+     */
     ngx_http_handler_pt        handler;
     ngx_uint_t                 next;
 };
@@ -168,6 +172,11 @@ typedef struct {
     ngx_uint_t                 variables_hash_max_size;
     ngx_uint_t                 variables_hash_bucket_size;
 
+    /* 
+     * ngx_http_variable_t 所定义的变量会在preconfiguration里添加到这个hash表里
+     * 为什么要在preconfiguration里，这是因为读取配置时有可能会读到这个变量 
+     * 具体变量存储在前面的variables变量里
+     */
     ngx_hash_keys_arrays_t    *variables_keys;
 
     ngx_array_t               *ports;

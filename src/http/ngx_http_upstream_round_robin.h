@@ -128,6 +128,9 @@ typedef struct {
     ngx_uint_t                      config;
     ngx_http_upstream_rr_peers_t   *peers;
     ngx_http_upstream_rr_peer_t    *current;
+    /*
+     * ???tried是用来干嘛的?
+     */
     uintptr_t                      *tried;
     uintptr_t                       data;
 } ngx_http_upstream_rr_peer_data_t;

@@ -2562,7 +2562,12 @@ ngx_http_regex_exec(ngx_http_request_t *r, ngx_http_regex_t *re, ngx_str_t *s)
 
 #endif
 
-
+/*
+ *  nginx core module在初始化的时候会初始化变量hash table,
+ *  后续任何模块的变量，都会保存在这个hash表里.
+ *  注意，这个表只保存静态的变量名，并没有实际的赋值, 因为实际的赋值
+ *  是和request相关的.
+ */
 ngx_int_t
 ngx_http_variables_add_core_vars(ngx_conf_t *cf)
 {

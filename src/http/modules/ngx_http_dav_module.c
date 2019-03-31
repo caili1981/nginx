@@ -9,6 +9,7 @@
 #include <ngx_core.h>
 #include <ngx_http.h>
 
+/* 可以安装 cadaver 客户端进行测试 */
 
 #define NGX_HTTP_DAV_OFF             2
 
@@ -185,7 +186,7 @@ ngx_http_dav_handler(ngx_http_request_t *r)
 
         return ngx_http_dav_delete_handler(r);
 
-    case NGX_HTTP_MKCOL:
+    case NGX_HTTP_MKCOL:  /* 创建文件夹 */
 
         return ngx_http_dav_mkcol_handler(r, dlcf);
 

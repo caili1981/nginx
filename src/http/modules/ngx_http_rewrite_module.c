@@ -11,6 +11,14 @@
 
 
 typedef struct {
+    /*
+     * 对于set函数来说，它是一段函数指针的数组
+     如下:
+     (gdb)  p ((ngx_http_script_code_pt *)rlcf->codes.elts)[0]
+     $25 = (ngx_http_script_code_pt) 0x442850 <ngx_http_script_value_code>
+     (gdb)  p ((ngx_http_script_code_pt *)rlcf->codes.elts)[1]
+     $26 = (ngx_http_script_code_pt) 0x0
+     */
     ngx_array_t  *codes;        /* uintptr_t */
 
     ngx_uint_t    stack_size;
@@ -909,6 +917,7 @@ ngx_http_rewrite_set(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     value[1].len--;
     value[1].data++;
 
+    /* 为什么要添加变量??? 在模块的preconfiguration中不是已经添加过了吗? */
     v = ngx_http_add_variable(cf, &value[1],
                               NGX_HTTP_VAR_CHANGEABLE|NGX_HTTP_VAR_WEAK);
     if (v == NULL) {
@@ -921,6 +930,10 @@ ngx_http_rewrite_set(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     }
 
     if (v->get_handler == NULL) {
+        /* 
+         * 如果变量没有定义，则get_handler使用默认的函数 
+         * 这个初始化的函数会打印相应的警告信息:uninitilized var
+         */
         v->get_handler = ngx_http_rewrite_var;
         v->data = index;
     }

@@ -54,6 +54,16 @@ ngx_uint_t            ngx_use_accept_mutex;
 ngx_uint_t            ngx_accept_events;
 ngx_uint_t            ngx_accept_mutex_held;
 ngx_msec_t            ngx_accept_mutex_delay;
+/* 这是为了防止nginx某一个work process负载过高时，仍然accept新连接，导致accept失败*/
+/*
+ *  原理如下:
+ *  1.  每次accept完之后都会将ngx_accept_disable设置为:
+ *      总连接数/8 - free_connection_n
+ *  2.  当ngx_accept_disabled > 0 时，不会去尝试accept锁.
+ *      但是会将ngx_accept_disabled --;
+ *  总结: 如果accept时当前连接超过总连接的7/8时，nginx会取消尝试accept.
+ *      但是，并非无限制取消尝试，而是超过多少，等待多少次
+ */
 ngx_int_t             ngx_accept_disabled;
 
 
@@ -201,6 +211,10 @@ ngx_process_events_and_timers(ngx_cycle_t *cycle)
         flags = 0;
 
     } else {
+        /* 
+         * 找到最近的一个timer超时事件，epoll_wait事件时，
+         *  如果fd没有事件到达， 会以此超时事件去进行等待. 从而保证cpu不会不停的100%
+         */
         timer = ngx_event_find_timer();
         flags = NGX_UPDATE_TIME;
 
@@ -220,6 +234,7 @@ ngx_process_events_and_timers(ngx_cycle_t *cycle)
             ngx_accept_disabled--;
 
         } else {
+            /* 解决惊群问题的关键函数 */
             if (ngx_trylock_accept_mutex(cycle) == NGX_ERROR) {
                 return;
             }
@@ -260,6 +275,9 @@ ngx_process_events_and_timers(ngx_cycle_t *cycle)
 }
 
 
+/*
+ * 将事件添加到epoll中. 一般与ngx_add_timer一起工作, 以处理事件超时
+ */
 ngx_int_t
 ngx_handle_read_event(ngx_event_t *rev, ngx_uint_t flags)
 {
@@ -327,7 +345,9 @@ ngx_handle_read_event(ngx_event_t *rev, ngx_uint_t flags)
     return NGX_OK;
 }
 
-
+/*
+ * 将写事件添加到epoll中.
+ */
 ngx_int_t
 ngx_handle_write_event(ngx_event_t *wev, size_t lowat)
 {
@@ -520,8 +540,11 @@ ngx_event_module_init(ngx_cycle_t *cycle)
 
 
     /* cl should be equal to or greater than cache line size */
-
-    cl = 128;
+    /*
+     * 由于变量频繁被访问，每个变量=cache line size, 能够有效减少cache-line的互锁时间 
+     * 从而避免使用A1时，cpu不得不将A2/A3...都锁住.
+     */
+    cl = 128;  
 
     size = cl            /* ngx_accept_mutex */
            + cl          /* ngx_connection_counter */

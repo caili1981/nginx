@@ -34,8 +34,12 @@ typedef void (*ngx_event_save_peer_session_pt)(ngx_peer_connection_t *pc,
 
 
 struct ngx_peer_connection_s {
+    /* 到上游服务器的tcp/socket连接 */
     ngx_connection_t                *connection;
 
+    /*
+     * upstream server链接的socket地址, 由get函数获得
+     */
     struct sockaddr                 *sockaddr;
     socklen_t                        socklen;
     ngx_str_t                       *name;
@@ -43,6 +47,13 @@ struct ngx_peer_connection_s {
     ngx_uint_t                       tries;
     ngx_msec_t                       start_time;
 
+    /*
+     * 在ip_hash里，使用的是ngx_http_upstream_get_ip_hash_peer
+     * 如果设置了keepalive, 那么get/free会被再次复用.
+     * 具体调用:
+     *    ngx_http_upstream_get_keepalive_peer
+     *      (original_get_peer)ngx_http_upstream_get_ip_hash_peer
+     */
     ngx_event_get_peer_pt            get;
     ngx_event_free_peer_pt           free;
     ngx_event_notify_peer_pt         notify;
@@ -60,6 +71,7 @@ struct ngx_peer_connection_s {
 
     ngx_log_t                       *log;
 
+    /* keepavlie 如果找到可复用的连接，会将cached设置为1 */
     unsigned                         cached:1;
     unsigned                         transparent:1;
     unsigned                         so_keepalive:1;

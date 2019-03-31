@@ -475,7 +475,9 @@ ngx_conf_bitmask_t  ngx_http_upstream_ignore_headers_masks[] = {
     { ngx_null_string, 0 }
 };
 
-
+/*
+ * 创建upstream, 详细实例可以参见ngx_http_proxy_module
+ */
 ngx_int_t
 ngx_http_upstream_create(ngx_http_request_t *r)
 {
@@ -508,6 +510,32 @@ ngx_http_upstream_create(ngx_http_request_t *r)
     return NGX_OK;
 }
 
+/*
+ * 调用关系:
+ * - ngx_http_upstream_init
+ *   - ngx_http_upstream_init_request
+ *     - ngx_http_upstream_connect (非阻塞的connect, 可以继续后续动作).
+ *       - ngx_event_connect_peer 
+ *           - 设置write_event_handler = ngx_http_upstream_send_request_handler (epoll 重新调度)
+ *           - 设置read_event_handler = ngx_http_upstream_process_header
+ *           - ngx_http_upstream_send_request  (通过write_event_handler恢复流程)
+ *           - ngx_http_upstream_process_header （通过read_event_handler恢复流程)
+ *             - ngx_http_upstream_process_non_buffered_downstream
+ *               > 当header处理完时，切不需要buffer，则将write_event_handler设置为它
+ *             - ngx_http_upstream_process_body_in_memory
+ *             - ngx_http_upstream_send_response(不区分报文头和报文体)
+ *               > 只有等报文头处理完，才会进入这个函数
+ * 
+ * - input_filter(data, bytes)
+ *   尚未处理的报文:
+ *     start/end标志内存的起始地址, length表示buffer所剩的长度
+ *   接收报文的处理
+ *     - 从last开始往后覆盖，遇到end，变成start，直到u->length指示空间为0为止
+ *   last指向接收报文将覆盖的位置. bytes, 指示长度
+ *     - 如果不需要缓存报文, 则直接返回. last不动。下次接收报文从last开始保存
+ *     - 如果需要缓存nbytes，则last向后移动nbytes, 那么这nbytes的内容不会被覆盖, 下次接收
+ *       位置从last+nbytes开始,并改变u->length
+ */
 
 void
 ngx_http_upstream_init(ngx_http_request_t *r)
@@ -526,10 +554,12 @@ ngx_http_upstream_init(ngx_http_request_t *r)
     }
 #endif
 
+    /* 将timer移除，否则监听事件会超时 */
     if (c->read->timer_set) {
         ngx_del_timer(c->read);
     }
 
+    /* TODO: 为什么不调用ngx_handle_write_event函数??? */
     if (ngx_event_flags & NGX_USE_CLEAR_EVENT) {
 
         if (!c->write->active) {
@@ -567,6 +597,9 @@ ngx_http_upstream_init_request(ngx_http_request_t *r)
 #if (NGX_HTTP_CACHE)
 
     if (u->conf->cache) {
+        /*
+         *  如果配置了proxy_cache
+         */
         ngx_int_t  rc;
 
         rc = ngx_http_upstream_cache(r, u);
@@ -614,6 +647,7 @@ ngx_http_upstream_init_request(ngx_http_request_t *r)
     u->store = u->conf->store;
 
     if (!u->store && !r->post_action && !u->conf->ignore_client_abort) {
+        /* 检查客户端是否断开连接 */
         r->read_event_handler = ngx_http_upstream_rd_check_broken_connection;
         r->write_event_handler = ngx_http_upstream_wr_check_broken_connection;
     }
@@ -622,7 +656,8 @@ ngx_http_upstream_init_request(ngx_http_request_t *r)
         u->request_bufs = r->request_body->bufs;
     }
 
-    if (u->create_request(r) != NGX_OK) {
+    /* 调用upstream 创建者的 create handler */
+    if (u->create_request(r) != NGX_OK) {   
         ngx_http_finalize_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
         return;
     }
@@ -638,6 +673,7 @@ ngx_http_upstream_init_request(ngx_http_request_t *r)
 
     clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
 
+    /* 设置output 的 buffer */
     u->output.alignment = clcf->directio_alignment;
     u->output.pool = r->pool;
     u->output.bufs.num = 1;
@@ -793,6 +829,9 @@ found:
     u->ssl_name = uscf->host;
 #endif
 
+    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0, 
+                   "init peer connection: %s\n", __FUNCTION__);
+
     if (uscf->peer.init(r, uscf) != NGX_OK) {
         ngx_http_upstream_finalize_request(r, u,
                                            NGX_HTTP_INTERNAL_SERVER_ERROR);
@@ -824,30 +863,38 @@ ngx_http_upstream_cache(ngx_http_request_t *r, ngx_http_upstream_t *u)
 
     if (c == NULL) {
 
-        if (!(r->method & u->conf->cache_methods)) {
+        if (!(r->method & u->conf->cache_methods)) { /*cache_methods 默认为GET/HEAD */
             return NGX_DECLINED;
         }
 
+        /* 获得当前配置的cache_zone */
         rc = ngx_http_upstream_cache_get(r, u, &cache);
 
         if (rc != NGX_OK) {
             return rc;
         }
 
+        /* 如果是HEAD命令，将其转换成get命令 */
         if (r->method == NGX_HTTP_HEAD && u->conf->cache_convert_head) {
             u->method = ngx_http_core_get_method;
         }
 
+        /*
+         * 创建一个cache(r->cache), 这个cache下包含一个keys数组
+         */
         if (ngx_http_file_cache_new(r) != NGX_OK) {
             return NGX_ERROR;
         }
 
+        /*
+         * 根据proxy_pass_key 所定义的表达式计算出key的值
+         * 并将key值送入r->cache
+         */
         if (u->create_key(r) != NGX_OK) {
             return NGX_ERROR;
         }
 
         /* TODO: add keys */
-
         ngx_http_file_cache_create_key(r);
 
         if (r->cache->header_start + 256 > u->conf->buffer_size) {
@@ -1306,7 +1353,7 @@ ngx_http_upstream_wr_check_broken_connection(ngx_http_request_t *r)
     ngx_http_upstream_check_broken_connection(r, r->connection->write);
 }
 
-
+/* TODO: read, 客户端连接是否已经断开 */
 static void
 ngx_http_upstream_check_broken_connection(ngx_http_request_t *r,
     ngx_event_t *ev)
@@ -1635,7 +1682,11 @@ ngx_http_upstream_connect(ngx_http_request_t *r, ngx_http_upstream_t *u)
     u->request_body_sent = 0;
     u->request_body_blocked = 0;
 
-    if (rc == NGX_AGAIN) {
+    if (rc == NGX_AGAIN) {  
+        /* 
+         * 延迟检查连接是否建立成功, 如果没有建立成功，
+         * 将write加入事件监控中 
+         */
         ngx_add_timer(c->write, u->conf->connect_timeout);
         return;
     }
@@ -2008,6 +2059,7 @@ ngx_http_upstream_send_request(ngx_http_request_t *r, ngx_http_upstream_t *u,
                    "http upstream send request");
 
     if (u->state->connect_time == (ngx_msec_t) -1) {
+        /* 设置上游服务器的连接耗时 */
         u->state->connect_time = ngx_current_msec - u->start_time;
     }
 
@@ -2021,6 +2073,7 @@ ngx_http_upstream_send_request(ngx_http_request_t *r, ngx_http_upstream_t *u,
     rc = ngx_http_upstream_send_request_body(r, u, do_write);
 
     if (rc == NGX_ERROR) {
+        /* 重新挑选一个upstream */
         ngx_http_upstream_next(r, u, NGX_HTTP_UPSTREAM_FT_ERROR);
         return;
     }
@@ -2032,6 +2085,7 @@ ngx_http_upstream_send_request(ngx_http_request_t *r, ngx_http_upstream_t *u,
 
     if (rc == NGX_AGAIN) {
         if (!c->write->ready || u->request_body_blocked) {
+            /* 上次发送没有全部成功 */
             ngx_add_timer(c->write, u->conf->send_timeout);
 
         } else if (c->write->timer_set) {
@@ -2078,6 +2132,7 @@ ngx_http_upstream_send_request(ngx_http_request_t *r, ngx_http_upstream_t *u,
     }
 
     if (!u->conf->preserve_output) {
+        /* 如果发送完，则无需再发送 */
         u->write_event_handler = ngx_http_upstream_dummy_handler;
     }
 
@@ -2097,6 +2152,7 @@ ngx_http_upstream_send_request(ngx_http_request_t *r, ngx_http_upstream_t *u,
         ngx_add_timer(c->read, u->conf->read_timeout);
 
         if (c->read->ready) {
+            /* 如果有上游服务器的读事件*/
             ngx_http_upstream_process_header(r, u);
             return;
         }
@@ -2377,6 +2433,7 @@ ngx_http_upstream_process_header(ngx_http_request_t *r, ngx_http_upstream_t *u)
             return;
         }
 
+        /* response 总长度 */
         u->state->bytes_received += n;
 
         u->buffer.last += n;
@@ -2432,6 +2489,7 @@ ngx_http_upstream_process_header(ngx_http_request_t *r, ngx_http_upstream_t *u)
         }
     }
 
+    /* 如果header处理未完成，则退出 */
     if (ngx_http_upstream_process_headers(r, u) != NGX_OK) {
         return;
     }
@@ -2915,6 +2973,7 @@ ngx_http_upstream_send_response(ngx_http_request_t *r, ngx_http_upstream_t *u)
         return;
     }
 
+    /* header已经处理完，发送响应 */
     u->header_sent = 1;
 
     if (u->upgrade) {
@@ -3419,7 +3478,7 @@ ngx_http_upstream_process_upgraded(ngx_http_request_t *r,
             }
         }
 
-        size = b->end - b->last;
+        size = b->end - b->last; /*计算剩余缓冲区空间*/
 
         if (size && src->read->ready) {
 
@@ -3506,7 +3565,7 @@ ngx_http_upstream_process_upgraded(ngx_http_request_t *r,
     }
 }
 
-
+/* input_filter并不会缓存任何报文，所有的报文都保存在u->buffer里 */
 static void
 ngx_http_upstream_process_non_buffered_downstream(ngx_http_request_t *r)
 {
@@ -5836,6 +5895,7 @@ ngx_http_upstream_server(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 
     for (i = 2; i < cf->args->nelts; i++) {
 
+        /* 解析权重 */
         if (ngx_strncmp(value[i].data, "weight=", 7) == 0) {
 
             if (!(uscf->flags & NGX_HTTP_UPSTREAM_WEIGHT)) {
@@ -5965,6 +6025,10 @@ not_supported:
 }
 
 
+/*
+ *  检查是否存在upstream, 如果存在则返回与url对应的upstream, 
+ *  否则，则创建一个新的.
+ */
 ngx_http_upstream_srv_conf_t *
 ngx_http_upstream_add(ngx_conf_t *cf, ngx_url_t *u, ngx_uint_t flags)
 {
@@ -5991,6 +6055,7 @@ ngx_http_upstream_add(ngx_conf_t *cf, ngx_url_t *u, ngx_uint_t flags)
 
     for (i = 0; i < umcf->upstreams.nelts; i++) {
 
+        /* 检查是否有相同的upstream 名字 */
         if (uscfp[i]->host.len != u->host.len
             || ngx_strncasecmp(uscfp[i]->host.data, u->host.data, u->host.len)
                != 0)
@@ -5998,6 +6063,7 @@ ngx_http_upstream_add(ngx_conf_t *cf, ngx_url_t *u, ngx_uint_t flags)
             continue;
         }
 
+        /* 若相等 */
         if ((flags & NGX_HTTP_UPSTREAM_CREATE)
              && (uscfp[i]->flags & NGX_HTTP_UPSTREAM_CREATE))
         {

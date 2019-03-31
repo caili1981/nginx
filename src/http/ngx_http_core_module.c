@@ -879,17 +879,17 @@ ngx_http_core_generic_phase(ngx_http_request_t *r, ngx_http_phase_handler_t *ph)
 
     rc = ph->handler(r);
 
-    if (rc == NGX_OK) {
+    if (rc == NGX_OK) {   /* 跳过当前phase, 执行下一个phase */
         r->phase_handler = ph->next;
         return NGX_AGAIN;
     }
 
-    if (rc == NGX_DECLINED) {
+    if (rc == NGX_DECLINED) { /* 继续下一个phase */
         r->phase_handler++;
         return NGX_AGAIN;
     }
 
-    if (rc == NGX_AGAIN || rc == NGX_DONE) {
+    if (rc == NGX_AGAIN || rc == NGX_DONE) { /* 阻塞, 控制权交给epoll模块 */
         return NGX_OK;
     }
 
@@ -911,6 +911,7 @@ ngx_http_core_rewrite_phase(ngx_http_request_t *r, ngx_http_phase_handler_t *ph)
 
     rc = ph->handler(r);
 
+    /* NGX_AGAIN 接着调用下一个phases */
     if (rc == NGX_DECLINED) {
         r->phase_handler++;
         return NGX_AGAIN;
@@ -1072,7 +1073,7 @@ ngx_http_core_access_phase(ngx_http_request_t *r, ngx_http_phase_handler_t *ph)
     ngx_int_t                  rc;
     ngx_http_core_loc_conf_t  *clcf;
 
-    if (r != r->main) {
+    if (r != r->main) {   /* 访问控制无需对子请求做检查, 所以此时跳过 */
         r->phase_handler = ph->next;
         return NGX_AGAIN;
     }
@@ -1165,6 +1166,15 @@ ngx_http_core_content_phase(ngx_http_request_t *r,
     ngx_str_t  path;
 
     if (r->content_handler) {
+        /*
+         * 正常情况下，如果没有定义自己的处理函数，
+         * 则content_handler为空, 它会进入content phase handler,
+         * 而如果重写了content handler, 则不会进入, 因为content_handler
+         * 和phase_handler只有一个能生效. 前者会覆盖后者.
+         */
+        /*
+         * 为了防止其他模块仍在处理写事件，而此模块仍为处理完content，将事件设置为空处理函数
+         */
         r->write_event_handler = ngx_http_request_empty_handler;
         ngx_http_finalize_request(r, r->content_handler(r));
         return NGX_OK;
@@ -1173,6 +1183,11 @@ ngx_http_core_content_phase(ngx_http_request_t *r,
     ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
                    "content phase: %ui", r->phase_handler);
 
+    /*
+     * 如果没有定义content_handler, ph->handler可为ngx_http_static_handler
+     * 从而进入静态页面的处理函数. 这个函数会调用
+     * ngx_http_send_header/ngx_http_output_filter
+     */
     rc = ph->handler(r);
 
     if (rc != NGX_DECLINED) {
@@ -1724,6 +1739,10 @@ ngx_http_send_response(ngx_http_request_t *r, ngx_uint_t status,
     out.buf = b;
     out.next = NULL;
 
+    /*
+     * 如果header一次无法完全发送，则会返回NGX_AGAIN, 
+     * 无法发送完的buf存入request->out中
+     */
     rc = ngx_http_send_header(r);
 
     if (rc == NGX_ERROR || rc > NGX_OK || r->header_only) {
@@ -1756,6 +1775,12 @@ ngx_http_send_header(ngx_http_request_t *r)
 }
 
 
+/*
+ * body fitler之后发送报文体, 注意:它并不发送header
+ * 如果需要发送header, 需要先填写headers_out, 
+ * 然后调用ngx_http_send_header
+ * send_header函数里会调用top_header_filter
+ */
 ngx_int_t
 ngx_http_output_filter(ngx_http_request_t *r, ngx_chain_t *in)
 {
@@ -2217,6 +2242,9 @@ ngx_http_gzip_quantity(u_char *p, u_char *last)
 #endif
 
 
+/*
+ * 创建一个subrequest，并将其加入postponed链表中
+ */
 ngx_int_t
 ngx_http_subrequest(ngx_http_request_t *r,
     ngx_str_t *uri, ngx_str_t *args, ngx_http_request_t **psr,
@@ -2328,6 +2356,9 @@ ngx_http_subrequest(ngx_http_request_t *r,
     sr->read_event_handler = ngx_http_request_empty_handler;
     sr->write_event_handler = ngx_http_handler;
 
+    /*
+     * sub-request和主req之间的变量是继承的
+     */
     sr->variables = r->variables;
 
     sr->log_handler = r->log_handler;
@@ -2337,6 +2368,10 @@ ngx_http_subrequest(ngx_http_request_t *r,
     }
 
     if (!sr->background) {
+        /* 
+         * 如果当前请求是active_request, 且此subrequest是它的第一个子请求
+         * 在ngx_http_postpone_filter里会利用它来进行判断是不是第一个sub-request
+         */
         if (c->data == r && r->postponed == NULL) {
             c->data = sr;
         }
@@ -2352,8 +2387,7 @@ ngx_http_subrequest(ngx_http_request_t *r,
 
         if (r->postponed) {
             for (p = r->postponed; p->next; p = p->next) { /* void */ }
-            p->next = pr;
-
+            p->next = pr; /* 将当前pr放入postponed队尾 */
         } else {
             r->postponed = pr;
         }
@@ -2397,6 +2431,9 @@ ngx_http_subrequest(ngx_http_request_t *r,
         ngx_http_update_location_config(sr);
     }
 
+    /*
+     * 将当前子请求置于待处理队列的队尾
+     */
     return ngx_http_post_request(sr, NULL);
 }
 

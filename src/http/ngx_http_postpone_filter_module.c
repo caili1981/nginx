@@ -66,9 +66,17 @@ ngx_http_postpone_filter(ngx_http_request_t *r, ngx_chain_t *in)
         return ngx_http_postpone_filter_in_memory(r, in);
     }
 
+    /* 
+     * 当前请求不能往out chain发送数据，如果产生了数据，新建一个节点，
+     * 将它保存在当前请求的postponed队尾。这样就保证了数据按序发到客户端 
+     */
     if (r != c->data) {
 
+        /*c->data代表active的request*/
         if (in) {
+            /* 
+             * 将当前r放入postponed队列最后一个, 并将buffer存入此request的out队列
+             */
             if (ngx_http_postpone_filter_add(r, in) != NGX_OK) {
                 return NGX_ERROR;
             }
@@ -85,7 +93,16 @@ ngx_http_postpone_filter(ngx_http_request_t *r, ngx_chain_t *in)
         return NGX_OK;
     }
 
+
+    /* 到这里，表示当前请求可以往out chain发送数据，如果它的postponed链表中没有子请求，也没有数据，
+       则直接发送当前产生的数据in或者继续发送out chain中之前没有发送完成的数据 */
     if (r->postponed == NULL) {
+
+        /*
+         * 1. 当前是active的request, 
+         * 2. 没有子请求
+         * 则直接发送
+         */
 
         if (in || c->buffered) {
             return ngx_http_next_body_filter(r->main, in);
@@ -93,6 +110,12 @@ ngx_http_postpone_filter(ngx_http_request_t *r, ngx_chain_t *in)
 
         return NGX_OK;
     }
+
+
+    /*
+     * 1. 当前是active的request.
+     * 2. 有子请求
+     */
 
     if (in) {
         if (ngx_http_postpone_filter_add(r, in) != NGX_OK) {
@@ -104,6 +127,9 @@ ngx_http_postpone_filter(ngx_http_request_t *r, ngx_chain_t *in)
         pr = r->postponed;
 
         if (pr->request) {
+            /* 
+             * 找到第一个不为空的子请求，
+             */
 
             ngx_log_debug2(NGX_LOG_DEBUG_HTTP, c->log, 0,
                            "http postpone filter wake \"%V?%V\"",
@@ -113,6 +139,10 @@ ngx_http_postpone_filter(ngx_http_request_t *r, ngx_chain_t *in)
 
             c->data = pr->request;
 
+            /*
+             * 将当前request放入完成队列, 这样可以调用回调
+             * 通知这个子请求已经完成
+             */
             return ngx_http_post_request(pr->request, NULL);
         }
 
@@ -146,6 +176,9 @@ ngx_http_postpone_filter_add(ngx_http_request_t *r, ngx_chain_t *in)
     if (r->postponed) {
         for (pr = r->postponed; pr->next; pr = pr->next) { /* void */ }
 
+        /*
+         * 如果最后一个是一个buffer，而不是新的request，则可以直接利用此buffer
+         */
         if (pr->request == NULL) {
             goto found;
         }

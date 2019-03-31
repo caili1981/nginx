@@ -202,7 +202,6 @@ ngx_http_header_t  ngx_http_headers_in[] = {
     { ngx_null_string, 0, NULL }
 };
 
-
 void
 ngx_http_init_connection(ngx_connection_t *c)
 {
@@ -364,6 +363,7 @@ ngx_http_init_connection(ngx_connection_t *c)
     ngx_add_timer(rev, c->listening->post_accept_timeout);
     ngx_reusable_connection(c, 1);
 
+    /* epoll开始监控读事件 */
     if (ngx_handle_read_event(rev, 0) != NGX_OK) {
         ngx_http_close_connection(c);
         return;
@@ -371,6 +371,60 @@ ngx_http_init_connection(ngx_connection_t *c)
 }
 
 
+/*
+   - 以事件流程看待整个http处理生命周期. 可以参见github
+   - 准备知识
+       - ngx_event_t 
+       - handler, 每个不同状态的事件都会有相应的handler进行处理.
+       - data，会随着不同的状态传入不同的值. 
+   - init
+       - 初始化状态，将read event的data设置为ngx_listening_t.
+       - ngx_event_t
+           - event_handler = ngx_event_accept
+           - data = ngx_connections_t (不是普通的connection，而是listen socket所对应的connections).
+   - accept
+       - tcp连接成功.
+       - ngx_get_connection 生成一个连接.
+       - 调用ngx_listening_t->handler(ngx_http_init_connection)生成http连接.
+       - ngx_http_init_connection会调用ngx_handle_read_event将rev加入到监听队列中.
+       - ngx_event_t
+           - event_handler = ngx_http_wait_request_handler
+           - data = ngx_connection_t
+   - wait_request状态.
+       - 处理http请求.
+       - 调用ngx_http_process_request_line进入http连接处理状态.
+           - ngx_http_create_request 创建http_request请求数据结构.
+       - ngx_http_wait_request_handler
+         - ngx_http_create_request
+           > 此时connection->data就变成request
+   - process request line
+         - ngx_http_process_request_line
+           - pipeline的处理
+             - 在nginx发送完一个响应时，调用ngx_http_finalize_connection->ngx_http_set_keepalive, 重新将ngx_http_process_request_line挂上read event.
+             - 如果此请求时proxy_pass/upstream, 多个请求会挑选出不同的ip地址作为上游.
+               - 也就是说一个原始请求连接，多个upstream请求连接.
+           - ngx_http_read_request_header
+             > 如果request报文读取不完全可能被中断, 重新进入ngx_http_process_request_line
+           - ngx_http_parse_request_line
+             - ngx_http_process_request_headers
+   - request handler 状态.  
+               - ngx_http_process_request
+                 - 设置connection->read/write回调为ngx_http_request_handler
+                   - 使用r->write_event_handler/r->read_event_handler
+                 - ngx_http_handler
+                   - ngx_http_core_run_phases
+                     - ngx_http_core_content_phase
+                       - ngx_http_proxy_handler
+                         - ngx_http_read_client_request_body
+                           - nginx所有的读写操作只在需要的时候才会去做. 并不是一开始就立即读取.
+                           - 根据后续的动作处理报文的body.
+                           - ngx_http_upstream_init
+                             - ngx_http_upstream_init_request
+   - upstream 状态
+                               - ngx_http_upstream_connect
+                                 > 将connection->read/write->handler设置为 ngx_http_upstream_handler
+                 - ngx_http_run_posted_request
+*/
 static void
 ngx_http_wait_request_handler(ngx_event_t *rev)
 {
@@ -386,7 +440,7 @@ ngx_http_wait_request_handler(ngx_event_t *rev)
 
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, c->log, 0, "http wait request handler");
 
-    if (rev->timedout) {
+    if (rev->timedout) { /* 每个事件的handler函数需要处理是否是timeout */
         ngx_log_error(NGX_LOG_INFO, c->log, NGX_ETIMEDOUT, "client timed out");
         ngx_http_close_connection(c);
         return;
@@ -435,6 +489,7 @@ ngx_http_wait_request_handler(ngx_event_t *rev)
             ngx_reusable_connection(c, 1);
         }
 
+        /* 如果返回EAGAIN, 那么将读事件添加到epoll的监控队列中 */
         if (ngx_handle_read_event(rev, 0) != NGX_OK) {
             ngx_http_close_connection(c);
             return;
@@ -490,6 +545,11 @@ ngx_http_wait_request_handler(ngx_event_t *rev)
 
     ngx_reusable_connection(c, 0);
 
+    /* 
+     * 只所以把它放在这里，而不是ngx_http_init_connection 函数中, 
+     * 是为了应对tcp请求成功，但是却长时间不发送数据的情况.
+     * 这样做能节省内存，防止空连接攻击.
+     */
     c->data = ngx_http_create_request(c);
     if (c->data == NULL) {
         ngx_http_close_connection(c);
@@ -1498,6 +1558,13 @@ ngx_http_process_request_headers(ngx_event_t *rev)
         break;
     }
 
+    /*
+     * ngx_http_handler 会调用 ngx_http_core_run_phases, 
+     * 这个过程会产生subrequest，
+     * 所以需要调用ngx_http_run_posted_requests继续subrequest, 
+     * 当子请求结束时, 且没有下级子请求时，ngx_http_finalize_request会
+     * 将父请求post进来，以唤醒父请求, 依次类推, 直到唤醒主请求
+     */
     ngx_http_run_posted_requests(c);
 }
 
@@ -2343,6 +2410,7 @@ ngx_http_request_handler(ngx_event_t *ev)
     }
 
     if (ev->write) {
+        /* 写事件优先于读事件，是nginx高性能的一大体现, 从而使得内存能够尽快释放 */
         r->write_event_handler(r);
 
     } else {
@@ -2364,8 +2432,8 @@ ngx_http_run_posted_requests(ngx_connection_t *c)
         if (c->destroyed) {
             return;
         }
-
-        r = c->data;
+        /* 当前active的连接, 不一定是主连接 */
+        r = c->data; 
         pr = r->main->posted_requests;
 
         if (pr == NULL) {
@@ -2381,6 +2449,7 @@ ngx_http_run_posted_requests(ngx_connection_t *c)
         ngx_log_debug2(NGX_LOG_DEBUG_HTTP, c->log, 0,
                        "http posted request: \"%V?%V\"", &r->uri, &r->args);
 
+        /* subrequest的write_event_handler=ngx_http_handler, 然后run core phases */
         r->write_event_handler(r);
     }
 }
@@ -2401,9 +2470,19 @@ ngx_http_post_request(ngx_http_request_t *r, ngx_http_posted_request_t *pr)
     pr->request = r;
     pr->next = NULL;
 
-    for (p = &r->main->posted_requests; *p; p = &(*p)->next) { /* void */ }
+    ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                   "current posted request list:");
+    for (p = &r->main->posted_requests; *p; p = &(*p)->next) { 
+        ngx_http_request_t *tmp_r = (*p)->request;
+        if (tmp_r != NULL) {
+            ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                           "     http posted request: \"%V?%V\"", &tmp_r->uri, &tmp_r->args);
+        }
+    }
 
     *p = pr;
+    ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                   "add posted request: \"%V?%V\"\n", &r->uri, &r->args);
 
     return NGX_OK;
 }
@@ -2439,6 +2518,9 @@ ngx_http_finalize_request(ngx_http_request_t *r, ngx_int_t rc)
     }
 
     if (r != r->main && r->post_subrequest) {
+        /*
+         * 如果是subrequest, 调用回调，通知subrequest已经完成
+         */
         rc = r->post_subrequest->handler(r, r->post_subrequest->data, rc);
     }
 
@@ -2482,6 +2564,7 @@ ngx_http_finalize_request(ngx_http_request_t *r, ngx_int_t rc)
         return;
     }
 
+    /* 当前请求不是主请求 */
     if (r != r->main) {
         clcf = ngx_http_get_module_loc_conf(r, ngx_http_core_module);
 
@@ -2504,7 +2587,13 @@ ngx_http_finalize_request(ngx_http_request_t *r, ngx_int_t rc)
             return;
         }
 
+        /*
+         * 当前请求有子请求
+         */
         if (r->buffered || r->postponed) {
+            /*
+             * 如果当前请求仍然有子请求, 或者未完成的数据
+             */
 
             if (ngx_http_set_write_handler(r) != NGX_OK) {
                 ngx_http_terminate_request(r, 0);
@@ -2512,6 +2601,10 @@ ngx_http_finalize_request(ngx_http_request_t *r, ngx_int_t rc)
 
             return;
         }
+
+        /*
+         * 当前子请求不再有子请求
+         */
 
         pr = r->parent;
 
@@ -2535,15 +2628,24 @@ ngx_http_finalize_request(ngx_http_request_t *r, ngx_int_t rc)
             r->done = 1;
 
             if (pr->postponed && pr->postponed->request == r) {
+                /*
+                 * 如果父请求子请求不为空，且所指向的请求是当前请求，
+                 * postponed队列后移。
+                 * 后面一个条件非常重要，因为每次next之后，可能已经移
+                 * 到下一个的子请求队列上了.
+                 */
                 pr->postponed = pr->postponed->next;
             }
 
+            /*
+             * ???TODO: 为什么将当前active请求设置为父请求???
+             */
             c->data = pr;
 
         } else {
 
             ngx_log_debug2(NGX_LOG_DEBUG_HTTP, c->log, 0,
-                           "http finalize non-active request: \"%V?%V\"",
+                           "http finalize non-active sub-request: \"%V?%V\"",
                            &r->uri, &r->args);
 
             r->write_event_handler = ngx_http_request_finalizer;
@@ -2566,6 +2668,11 @@ ngx_http_finalize_request(ngx_http_request_t *r, ngx_int_t rc)
         return;
     }
 
+    /*
+     *  当前请求是主请求
+     *  等待socket-write事件
+     *  1. 如果有子请求，那么等待write事件，将消息发送远端或者送回client.
+     */
     if (r->buffered || c->buffered || r->postponed) {
 
         if (ngx_http_set_write_handler(r) != NGX_OK) {
@@ -3325,6 +3432,11 @@ ngx_http_keepalive_handler(ngx_event_t *rev)
     c->idle = 0;
     ngx_reusable_connection(c, 0);
 
+    /*
+     * keepalive时，会重用socket连接，但是会创建新的request:
+     * 1.  释放旧连接的资源
+     * 2.  重新进入ngx_http_process_request_line，处理一个新的连接
+     */
     c->data = ngx_http_create_request(c);
     if (c->data == NULL) {
         ngx_http_close_connection(c);

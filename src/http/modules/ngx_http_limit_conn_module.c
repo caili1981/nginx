@@ -9,6 +9,14 @@
 #include <ngx_core.h>
 #include <ngx_http.h>
 
+/*
+ * limit conn 并不是限制tcp连接, 而是限制正在处理的请求.
+ * 只有如下请求才会被计算.
+ * 1.  read_request_line finished.
+ * 2.  请求处理未完成.
+ * 这意味着有多个keepalive tcp 连接可以同时连接到server, 而不会出错.
+ * 这个模块实际上是限制请求，而不是限制连接
+ */
 
 typedef struct {
     u_char                     color;
@@ -74,7 +82,7 @@ static ngx_conf_num_bounds_t  ngx_http_limit_conn_status_bounds = {
 
 static ngx_command_t  ngx_http_limit_conn_commands[] = {
 
-    { ngx_string("limit_conn_zone"),
+    { ngx_string("limit_conn_zone"),  /* 分配的shared mem 名字大小, 以及key */
       NGX_HTTP_MAIN_CONF|NGX_CONF_TAKE2,
       ngx_http_limit_conn_zone,
       0,
@@ -181,6 +189,11 @@ ngx_http_limit_conn_handler(ngx_http_request_t *r)
 
         r->main->limit_conn_set = 1;
 
+        /* 
+         * 用hash值来构建rbtree的key 
+         * rbnode->key = hash,
+         * rbnode->data = key.
+         */
         hash = ngx_crc32_short(key.data, key.len);
 
         shpool = (ngx_slab_pool_t *) limits[i].shm_zone->shm.addr;
