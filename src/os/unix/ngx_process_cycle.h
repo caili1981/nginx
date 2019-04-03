@@ -15,8 +15,11 @@
 
 #define NGX_CMD_OPEN_CHANNEL   1
 #define NGX_CMD_CLOSE_CHANNEL  2
+/* nginx -s quit */
 #define NGX_CMD_QUIT           3
+/* nginx -s stop */
 #define NGX_CMD_TERMINATE      4
+/* nginx -s reopen */
 #define NGX_CMD_REOPEN         5
 
 
@@ -36,7 +39,6 @@ typedef struct {
 
 void ngx_master_process_cycle(ngx_cycle_t *cycle);
 void ngx_single_process_cycle(ngx_cycle_t *cycle);
-
 
 extern ngx_uint_t      ngx_process;
 extern ngx_uint_t      ngx_worker;

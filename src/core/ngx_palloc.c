@@ -200,6 +200,10 @@ ngx_palloc_block(ngx_pool_t *pool, size_t size)
 
     for (p = pool->current; p->d.next; p = p->d.next) {
         if (p->d.failed++ > 4) {
+            /* 
+             * 如果新申请block, 那么证明现有的pool block 内存不够
+             * 当不够的次数大于4时，就不再尝试从这个pool里申请内存
+             */
             pool->current = p->d.next;
         }
     }

@@ -55,6 +55,9 @@ typedef struct {
 
 
 struct ngx_pool_s {
+    /* 
+     * pool是一个链表, 当当前pull不够分配时，会新分配一个pool
+     */
     ngx_pool_data_t       d;
     size_t                max;
     ngx_pool_t           *current;

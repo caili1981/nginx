@@ -57,12 +57,17 @@
 #define ngx_random               random
 
 /* TODO: #ifndef */
+/* nginx -s quit */
 #define NGX_SHUTDOWN_SIGNAL      QUIT
+/* nginx -s stop */
 #define NGX_TERMINATE_SIGNAL     TERM
+/* 暂时没找到命令 */
 #define NGX_NOACCEPT_SIGNAL      WINCH
+/* nginx -s reload */
 #define NGX_RECONFIGURE_SIGNAL   HUP
 
 #if (NGX_LINUXTHREADS)
+/* nginx -s reopen, 重新打开日志 */
 #define NGX_REOPEN_SIGNAL        INFO
 #define NGX_CHANGEBIN_SIGNAL     XCPU
 #else

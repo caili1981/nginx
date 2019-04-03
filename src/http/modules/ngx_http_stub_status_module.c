@@ -4,6 +4,9 @@
  * Copyright (C) Nginx, Inc.
  */
 
+/*
+ * 知识要点: 共享内存的使用
+ */
 
 #include <ngx_config.h>
 #include <ngx_core.h>
@@ -133,6 +136,9 @@ ngx_http_stub_status_handler(ngx_http_request_t *r)
     rd = *ngx_stat_reading;
     wr = *ngx_stat_writing;
     wa = *ngx_stat_waiting;
+
+    b->last = ngx_sprintf(b->last, "Current PID: %uA \n", ngx_pid);
+    b->last = ngx_sprintf(b->last, "Parent  PID: %uA \n", ngx_parent);
 
     b->last = ngx_sprintf(b->last, "Active connections: %uA \n", ac);
 

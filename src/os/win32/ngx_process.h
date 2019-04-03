@@ -38,6 +38,10 @@ typedef struct {
     u_char                  quit_event[NGX_PROCESS_SYNC_NAME];
     u_char                  reopen_event[NGX_PROCESS_SYNC_NAME];
 
+    /* 
+     * nginx -s quit 的时候，master会向所有的子进程发送channel quit cmd
+     * 对于just_spawn的进程，则不会发
+     */
     unsigned                just_spawn:1;
     unsigned                exiting:1;
 } ngx_process_t;

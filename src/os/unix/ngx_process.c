@@ -31,8 +31,13 @@ char           **ngx_argv;
 char           **ngx_os_argv;
 
 ngx_int_t        ngx_process_slot;
+/*TODO: ngx_channel 的作用是什么???*/
 ngx_socket_t     ngx_channel;
 ngx_int_t        ngx_last_process;
+/* 
+ * 维护所有master 进程所产生的子进程，包括worker/cache 
+ * worker 进程里也会维护一个进程列表.
+ */
 ngx_process_t    ngx_processes[NGX_MAX_PROCESSES];
 
 
@@ -95,6 +100,7 @@ ngx_spawn_process(ngx_cycle_t *cycle, ngx_spawn_proc_pt proc, void *data,
         s = respawn;
 
     } else {
+        /* 找到一个ngx_process空位 */
         for (s = 0; s < ngx_last_process; s++) {
             if (ngx_processes[s].pid == -1) {
                 break;
@@ -193,7 +199,7 @@ ngx_spawn_process(ngx_cycle_t *cycle, ngx_spawn_proc_pt proc, void *data,
         ngx_close_channel(ngx_processes[s].channel, cycle->log);
         return NGX_INVALID_PID;
 
-    case 0:
+    case 0: /* 子进程 */
         ngx_parent = ngx_pid;
         ngx_pid = ngx_getpid();
         proc(cycle, data);
@@ -480,6 +486,10 @@ ngx_process_get_status(void)
     one = 0;
 
     for ( ;; ) {
+        /* 
+         * 等待子进程状态变为terminate 
+         * -1 意味这等待所有子进程
+         */
         pid = waitpid(-1, &status, WNOHANG);
 
         if (pid == 0) {
@@ -523,6 +533,7 @@ ngx_process_get_status(void)
 
         for (i = 0; i < ngx_last_process; i++) {
             if (ngx_processes[i].pid == pid) {
+                /* 将子进程更新为exited状态 */
                 ngx_processes[i].status = status;
                 ngx_processes[i].exited = 1;
                 process = ngx_processes[i].name;

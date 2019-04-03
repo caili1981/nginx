@@ -77,6 +77,10 @@
  */
 #define NGX_HTTP_SUBREQUEST_WAITED         4
 #define NGX_HTTP_SUBREQUEST_CLONE          8
+/* 
+ * 创建后台子请求。此类子请求不参与主请求的响应 构造，
+ * 也就不会占用主请求的响应时间，但它依然会保持对主请求的引用。 
+ */
 #define NGX_HTTP_SUBREQUEST_BACKGROUND     16
 
 #define NGX_HTTP_LOG_UNSAFE                1
@@ -633,6 +637,8 @@ struct ngx_http_request_s {
 
     unsigned                          pipeline:1;
     unsigned                          chunked:1;
+    
+    /* 只发送header */
     unsigned                          header_only:1;
     unsigned                          expect_trailers:1;
     unsigned                          keepalive:1;

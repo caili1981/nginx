@@ -221,6 +221,7 @@ main(int argc, char *const *argv)
 
     /* TODO */ ngx_max_sockets = -1;
 
+    /* 初始化时间缓存模块 */
     ngx_time_init();
 
 #if (NGX_PCRE)
@@ -230,6 +231,7 @@ main(int argc, char *const *argv)
     ngx_pid = ngx_getpid();
     ngx_parent = ngx_getppid();
 
+    /* open log文件 */
     log = ngx_log_init(ngx_prefix);
     if (log == NULL) {
         return 1;
@@ -254,6 +256,7 @@ main(int argc, char *const *argv)
         return 1;
     }
 
+    /* 保存参数列表 */
     if (ngx_save_argv(&init_cycle, argc, argv) != NGX_OK) {
         return 1;
     }
@@ -262,6 +265,7 @@ main(int argc, char *const *argv)
         return 1;
     }
 
+    /* 获得系统变量，例如cpu个数，系统时间，pagesize等信息 */
     if (ngx_os_init(log) != NGX_OK) {
         return 1;
     }
@@ -278,16 +282,32 @@ main(int argc, char *const *argv)
      * ngx_slab_sizes_init() requires ngx_pagesize set in ngx_os_init()
      */
 
+    /* slab 机制的代码仍未完全看 */
     ngx_slab_sizes_init();
 
+    /* 
+     * nginx 在升级的时候会将socket的fd，通过环境变量传入新进程, 
+     * 这样新进程就可以通过环境变量继承fd. 
+     * 可以通过
+     * kill -USR2 `cat /usr/local/nginx/logs/nginx.pid`
+     * 升级，并查看socket fd的继承情况.
+     * 为什么socket fd通过execve 也可以继承???
+     * 新的master是被老的master fork的, fork会保留原来的fd状态.
+     * execve 也会保存原来的fd状态, 除非设置FD_CLOEXEC. 但是execve
+     * 并不能保留原来内存的内容，所以在execve是通过环境变量NGINX
+     * 来传递FD的值给新的master
+     * 新的master通过getsockopt/getsockname恢复sock的属性
+     */
     if (ngx_add_inherited_sockets(&init_cycle) != NGX_OK) {
         return 1;
     }
 
+    /* 设置module id，并计算最大模块数 */
     if (ngx_preinit_modules() != NGX_OK) {
         return 1;
     }
 
+    /* 读取配置核心函数 */
     cycle = ngx_init_cycle(&init_cycle);
     if (cycle == NULL) {
         if (ngx_test_config) {
@@ -298,12 +318,14 @@ main(int argc, char *const *argv)
         return 1;
     }
 
+    /* -t */
     if (ngx_test_config) {
         if (!ngx_quiet_mode) {
             ngx_log_stderr(0, "configuration file %s test is successful",
                            cycle->conf_file.data);
         }
 
+        /* -T */
         if (ngx_dump_config) {
             cd = cycle->config_dump.elts;
 
@@ -325,6 +347,11 @@ main(int argc, char *const *argv)
     }
 
     if (ngx_signal) {
+        /* 
+         * nginx -s 处理, 通过pid文件找到master的pid, 发送完信号，就退出
+         * 注意：这是在ngx_init_cycle之后，处理信号，
+         * 因为它需要检查配置是否正确
+         */
         return ngx_signal_process(cycle, ngx_signal);
     }
 
@@ -344,6 +371,10 @@ main(int argc, char *const *argv)
         return 1;
     }
 
+    /* 
+     * 在ngx_add_inherited_sockets 时，如果发现继承的socket，会
+     *  将ngx_inherited 设置为1  
+     */
     if (!ngx_inherited && ccf->daemon) {
         if (ngx_daemon(cycle->log) != NGX_OK) {
             return 1;
@@ -379,6 +410,7 @@ main(int argc, char *const *argv)
         ngx_single_process_cycle(cycle);
 
     } else {
+        /* 进入master 流程 */
         ngx_master_process_cycle(cycle);
     }
 

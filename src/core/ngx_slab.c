@@ -4,6 +4,17 @@
  * Copyright (C) Nginx, Inc.
  */
 
+/*
+ * ngx slab 和 内核的slab原理很相似:
+ * [参考链接](https://www.cnblogs.com/suncoolcat/p/3324880.html)
+ * 注意ngx_palloc 等函数并未用到slab机制
+ * 一般情况下，内存分配都用ngx_palloc, 这是普通的pool, 会随着request而释放.
+ * 但是某些，不能随request释放的东西，例如limit_conn模块. 它需要从pool之外
+ * 分配, 这就需要用slab，以提供性能。
+ * slab 机制和objcache/object magzine很类似. 
+ * 但是后者更适合多线程，因为可以做到无锁化.
+ */
+
 #include <ngx_config.h>
 #include <ngx_core.h>
 

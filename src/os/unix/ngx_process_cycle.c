@@ -28,28 +28,91 @@ static void ngx_cache_manager_process_handler(ngx_event_t *ev);
 static void ngx_cache_loader_process_handler(ngx_event_t *ev);
 
 
+/* ngx process 类型 */
 ngx_uint_t    ngx_process;
 ngx_uint_t    ngx_worker;
 ngx_pid_t     ngx_pid;
 ngx_pid_t     ngx_parent;
 
+/* 
+ * 收到子进程退出信号SIGCHLD会将ngx_reap设置为1 
+ * 1.  ngx_process_get_status更新ngx_processes中的子进程状态
+ * 2.  ngx_reap_children关闭channel.
+ */
 sig_atomic_t  ngx_reap;
+/* TODO: 好像没有地方用到???? */
 sig_atomic_t  ngx_sigio;
+/* 
+ * 在进行堵塞式系统调用时。为避免进程陷入无限期的等待，
+ * 能够为这些堵塞式系统调用设置定时器。
+ * Linux提供了alarm系统调用和SIGALRM信号实现这个功能。
+ */
 sig_atomic_t  ngx_sigalrm;
+/* 
+ * nginx -s stop /SIGINT
+ * 快速停止nginx
+ * 临时进程向master发送SIGTERM信号.
+ * master收到信号时，会设置ngx_terminate=1;
+ * 并向所有子进程发送NGX_CMD_TERMINATE channel信号.
+ */
 sig_atomic_t  ngx_terminate;
+/* 
+ * nginx -s reload的时候，临时进程向master进程发送SIGHUP信号，
+ * master会向所有子进程发送NGX_CMD_QUIT 
+ * 子进程在收到这个命令时会将此变量设置为1,
+ * nginx -s quit 的时候, 临时进程会向master发送SIGQUIT信号.
+ * master在收到信号之后，向所有子进程发送NGX_CMD_QUITchannel消息。
+ * 子进程收到这个命令的时候，会将ngx_quit设置为1，实现优雅退出.
+ */
 sig_atomic_t  ngx_quit;
 sig_atomic_t  ngx_debug_quit;
+
+/* 进程正在退出 */
 ngx_uint_t    ngx_exiting;
+/* nginx -s reload */
 sig_atomic_t  ngx_reconfigure;
+
+/*
+ * nginx -s reopen
+ * 重新打开日志文件
+ */
 sig_atomic_t  ngx_reopen;
 
+/*
+ * kill -USR2 `cat /usr/local/nginx/log/nginx.pid`
+ */
 sig_atomic_t  ngx_change_binary;
+/*
+ * 更新时新master的pid
+ */
 ngx_pid_t     ngx_new_binary;
+/*
+ * nginx 在更新时，会通过环境变量execve一个新的master.
+ * 如果存在环境变量，则会设置ngx_inherited为1
+ */
 ngx_uint_t    ngx_inherited;
+
+/*
+ * 是否已经将此进程设置为后台进程
+ */
 ngx_uint_t    ngx_daemonized;
 
+/* 
+ * 所有子进程都不接受新的连接,  
+ * 当master进程收到SIGWINCH信号时
+ * 将向所有worker进程发送NGX_CMD_QUIT channel消息. 客户端实现优雅退出.
+ */
 sig_atomic_t  ngx_noaccept;
+
+/*
+ * 意味着已经发送完NGX_CMD_QUIT channel 信号
+ * 当前已经处于不接受状态
+ */
 ngx_uint_t    ngx_noaccepting;
+
+/*
+ * 需要restart worker/cache-manager 进程
+ */
 ngx_uint_t    ngx_restart;
 
 
@@ -128,6 +191,7 @@ ngx_master_process_cycle(ngx_cycle_t *cycle)
 
     ccf = (ngx_core_conf_t *) ngx_get_conf(cycle->conf_ctx, ngx_core_module);
 
+    /* 创建work进程和cache-manager进程 */
     ngx_start_worker_processes(cycle, ccf->worker_processes,
                                NGX_PROCESS_RESPAWN);
     ngx_start_cache_manager_processes(cycle, 0);
@@ -161,6 +225,7 @@ ngx_master_process_cycle(ngx_cycle_t *cycle)
 
         ngx_log_debug0(NGX_LOG_DEBUG_EVENT, cycle->log, 0, "sigsuspend");
 
+        /* sigsuspend用于在接收到某个信号之前，临时用mask替换进程的信号掩码，并暂停进程执行，直到收到信号为止。 */
         sigsuspend(&set);
 
         ngx_time_update();
@@ -169,6 +234,7 @@ ngx_master_process_cycle(ngx_cycle_t *cycle)
                        "wake up, sigio %i", sigio);
 
         if (ngx_reap) {
+            /* 清理子进程 */
             ngx_reap = 0;
             ngx_log_debug0(NGX_LOG_DEBUG_EVENT, cycle->log, 0, "reap children");
 
@@ -176,6 +242,7 @@ ngx_master_process_cycle(ngx_cycle_t *cycle)
         }
 
         if (!live && (ngx_terminate || ngx_quit)) {
+            /* 没有存活子进程 */
             ngx_master_process_exit(cycle);
         }
 
@@ -232,6 +299,13 @@ ngx_master_process_cycle(ngx_cycle_t *cycle)
 
             ngx_log_error(NGX_LOG_NOTICE, cycle->log, 0, "reconfiguring");
 
+            /*
+             * reload 和 升级异同:
+             * 不同之处:
+             * 1.   reload的老master并不会被杀死.
+             * 相同之处:
+             * 2.   worker thread都会重新生成.
+             */
             cycle = ngx_init_cycle(cycle);
             if (cycle == NULL) {
                 cycle = (ngx_cycle_t *) ngx_cycle;
@@ -506,6 +580,7 @@ ngx_signal_worker_processes(ngx_cycle_t *cycle, int signo)
             continue;
         }
 
+        /* 无需向刚创建的worker发送信号 */
         if (ngx_processes[i].just_spawn) {
             ngx_processes[i].just_spawn = 0;
             continue;
@@ -526,6 +601,10 @@ ngx_signal_worker_processes(ngx_cycle_t *cycle, int signo)
                     ngx_processes[i].exiting = 1;
                 }
 
+                /*
+                 * 如果nginx channel 命令处理成功，则直接返回, 
+                 * 否则通过kill 发送响应信号.
+                 */
                 continue;
             }
         }
@@ -539,6 +618,7 @@ ngx_signal_worker_processes(ngx_cycle_t *cycle, int signo)
                           "kill(%P, %d) failed", ngx_processes[i].pid, signo);
 
             if (err == NGX_ESRCH) {
+                /* 没有此进程 */
                 ngx_processes[i].exited = 1;
                 ngx_processes[i].exiting = 0;
                 ngx_reap = 1;
@@ -554,6 +634,10 @@ ngx_signal_worker_processes(ngx_cycle_t *cycle, int signo)
 }
 
 
+/* 
+ * 当SIGCHLD信号收到时, worker thread已经关闭
+ * 此时需要将相关资源回收
+ */
 static ngx_uint_t
 ngx_reap_children(ngx_cycle_t *cycle)
 {
@@ -585,8 +669,13 @@ ngx_reap_children(ngx_cycle_t *cycle)
         }
 
         if (ngx_processes[i].exited) {
+            /* 
+             * 如果向worker thread发送信号时，worker thread 已经退出
+             * 此时会将exited设置为1.
+             */
 
             if (!ngx_processes[i].detached) {
+                /* TODO: detached 是什么意思??? */
                 ngx_close_channel(ngx_processes[i].channel, cycle->log);
 
                 ngx_processes[i].channel[0] = -1;
@@ -619,6 +708,9 @@ ngx_reap_children(ngx_cycle_t *cycle)
                 && !ngx_terminate
                 && !ngx_quit)
             {
+                /*
+                 * TODO: 这段代码什么意思？需要重看 
+                 */
                 if (ngx_spawn_process(cycle, ngx_processes[i].proc,
                                       ngx_processes[i].data,
                                       ngx_processes[i].name, i)
@@ -644,6 +736,10 @@ ngx_reap_children(ngx_cycle_t *cycle)
             }
 
             if (ngx_processes[i].pid == ngx_new_binary) {
+
+                /*
+                 * kill -USR2 nginx.pid升级
+                 */
 
                 ccf = (ngx_core_conf_t *) ngx_get_conf(cycle->conf_ctx,
                                                        ngx_core_module);
@@ -673,6 +769,7 @@ ngx_reap_children(ngx_cycle_t *cycle)
             }
 
         } else if (ngx_processes[i].exiting || !ngx_processes[i].detached) {
+            /* 仍然有子进程活着 */
             live = 1;
         }
     }

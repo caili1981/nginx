@@ -1,0 +1,12 @@
+echo "必须确认nginx启动命令是/usr/sbin/nginx -c /usr/local/nginx/conf/nginx.conf, 否则会报错"
+kill -USR2 `cat /usr/local/nginx/logs/nginx.pid`
+echo "等待新进程up..."
+sleep 10
+ps -aux | grep nginx
+echo "停止worker process 接受新连接..."
+kill -WINCH `cat /usr/local/nginx/logs/nginx.pid.oldbin`
+sleep 3
+ps -aux | grep nginx
+echo "old master process 退出"
+kill -QUIT `cat /usr/local/nginx/logs/nginx.pid.oldbin`
+ps -aux | grep nginx

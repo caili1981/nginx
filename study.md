@@ -671,9 +671,49 @@
         - 步骤2. file=index2.html.
       - content phase
         - 步骤1. 冲定向到file, 结果显示index2.html.
-    
+
+### nginx 进程间通信
+  - 基本方式.
+    - signal
+      - 临时进程向master进程发送相应的signal, master进程接着执行相应动作.
+        - nginx -s quit
+          - nginx临时进程会发送一个SIGQUIT 消息给master进程.
+          - 临时进程直接退出.
+          - master进程收到消息后，通过socketpair/channel向其下所有worker发送NGX_CMD_QUIT消息
+      - master进程也会通过这种方式向子进程发送信号. 例如channel发送失败时. 或者SIGWINCH时
+    - socketpair
+      - master向worker thread发送NGX_CMD_QUIT/NGX_CMD_TERM/NGX_CMD_REOPEN消息.
+  - 多进程户操作.
+    - 配置升级
+      - echo "必须确认nginx启动命令是/usr/sbin/nginx -c /usr/local/nginx/conf/nginx.conf, 否则会报错"
+      - 步骤:
+        1. kill -USR2 `cat /usr/local/nginx/logs/nginx.pid`
+        2. sleep 10
+          > "等待新进程up..."
+        3. kill -WINCH `cat /usr/local/nginx/logs/nginx.pid.oldbin`
+          > "停止worker process 接受新连接..."
+        4. sleep 3
+        5. kill -QUIT `cat /usr/local/nginx/logs/nginx.pid.oldbin`
+          >  old master process 退出
+      - 注意事项:
+        1. 配置升级并非一个命令就全部完成.
+          > 这样做的目的是，如果新版本出现问题，用户可以撤销升级.
+        2. 当kill -USR2 pid 之后，新老版本存在两个master, 两组worker.
+          - 新版本master相应nginx -s ...命令.
+          - 新/老版本worker共同处理流量.
+        3. 必须主动手动停止老版本的worker/master
+        4. 如果在停止worker之后发现新版本有问题，nginx -s quit可以退出新版本。并再生成老版本worker.
+
 ### nginx 文件操作.
   - 
+### nginx 日志切割
+  - 为什么要切割日志？
+    > 一般Nginx安装好后有些人会打开日志记录，有些人会关闭日志记录，打开日志记录的人一般都会把架设在Nginx上的所有网站日志都存在同一个文件里（比如我存在access.log日志文件里），这样日积月累所有网站的访问记录就会把日志文件越积越大，当需要查看日志文件的时候一看就是一大串，不方便查找。现在，如果我把每天的日志文件分割开来用相应的日期标识出来这样就大大方便查找了。 我是建议打开日志记录，日志记录里面存放着很多有用的东西。比如：浏览器名称，可以方便你对网站的排版做出调整；IP地址，如果网站收到攻击，你就可以查到那个IP地址。 Linux下我们可以简单的把日志文件mv走，但是你会发现mv走后新的日志文件没有重新生成，一般linux下用的文件句柄，文件被打开情况下你mv走文件，但是原来操作这个文件的进程还是有这个文件的inode等信息，原进程还是读写原来的文件，因此简单的mv是无法生效的。
+  - 因此建议过程如下
+    1. mv原文件到新文件目录中，这个时候 nginx还写这个文件（写入新位置文件中了）
+    2. 调用nginx -s  reopen用来打开日志文件，这样nginx会把新日志信息写入这个新的文件中
+
+  - 这样完成了日志的切割工作，同时切割过程中没有日志的丢失。
 ### 调用栈
   ```
   (gdb) bt

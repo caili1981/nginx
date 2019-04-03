@@ -8,6 +8,19 @@
 #include <ngx_config.h>
 #include <ngx_core.h>
 
+/*
+ * ngx time 模块实现要点:
+ * - 原理
+ *   - ngx的事件管理模块是由read/write构成.
+ *   - 为避免频发的系统调用，ngx 时间通过缓存进行管理.
+ *      - 缓存分为64个时间缓存slot.
+ *      - write 负责更新时间. 并将 ngx_cached_time 移动到下一个slot.
+ *      - read 读取ngx_cached_time所指向的时间.
+ *   - 可能存在多个writer更新时间, 所以write有锁.
+ *   - 时间字符串在每次更新时间时都会缓存, 供log 等其他模块使用
+ *   - ngx_time_update 在每个event 循环里都会进行调用
+ * - [参考文档](https://blog.csdn.net/Mrzhangjwei/article/details/77150335)
+ */
 
 static ngx_msec_t ngx_monotonic_time(time_t sec, ngx_uint_t msec);
 
@@ -219,6 +232,9 @@ ngx_monotonic_time(time_t sec, ngx_uint_t msec)
 
 #if !(NGX_WIN32)
 
+/*
+ * 每次接收到信号，信号处理函数之前都会调用
+ */
 void
 ngx_time_sigsafe_update(void)
 {

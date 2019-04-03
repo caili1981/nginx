@@ -4,6 +4,12 @@
  * Copyright (C) Nginx, Inc.
  */
 
+/*
+ * 知识要点: 
+ * 1. body/header filter
+ * 2. ngx_chain_t的使用
+ * 3. 多模匹配算法
+ */
 
 #include <ngx_config.h>
 #include <ngx_core.h>
@@ -619,7 +625,7 @@ ngx_http_sub_parse(ngx_http_request_t *r, ngx_http_sub_ctx_t *ctx,
     tables = ctx->tables;
     match = ctx->matches->elts;
 
-    offset = ctx->offset;
+    offset = ctx->offset; /* ctx->offset 初始化为所有patter的最小匹配长度 */
     end = ctx->buf->last - ctx->pos;
 
     if (ctx->once) {

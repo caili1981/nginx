@@ -22,6 +22,7 @@ ngx_uint_t         ngx_max_module;
 static ngx_uint_t  ngx_modules_n;
 
 
+/* 将ngx module 编号, 并计算出最大的module个数 */
 ngx_int_t
 ngx_preinit_modules(void)
 {

@@ -142,6 +142,15 @@ ngx_http_mirror_body_handler(ngx_http_request_t *r)
     r->preserve_body = 1;
 
     r->write_event_handler = ngx_http_core_run_phases;
+    /*
+     * 为什么不直接return的原因:
+     * 1. 如果请求body没有被重新调度，那么
+     * 此函数是被ngx_http_core_run_phases调用, 此时再继续调用ngx_http_core_run_phases.
+     * 此时直接返回不会出错.
+     * 2. 如果请求body读取时被重新调度.
+     * 那么此函数的上级函数并不是core_run_phases. 此时如果不运行
+     * ngx_http_core_run_phases, 就会有phase丢失.
+     */
     ngx_http_core_run_phases(r);
 }
 
