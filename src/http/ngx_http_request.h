@@ -76,6 +76,12 @@
  * 可以通过判断标志位得知子请求是否完成。
  */
 #define NGX_HTTP_SUBREQUEST_WAITED         4
+ /*
+  * 生成子请求，注意这里的NGX_HTTP_SUBREQUEST_CLONE，
+  * 默认生成子请求从server_rewrite阶段执行并跳过access阶段，
+  * 这里NGX_HTTP_SUBREQUEST_CLONE使生成的子请求从主请求的当前阶段
+  * (即content阶段）开始执行
+  */
 #define NGX_HTTP_SUBREQUEST_CLONE          8
 /* 
  * 创建后台子请求。此类子请求不参与主请求的响应 构造，
@@ -339,6 +345,10 @@ typedef struct ngx_http_addr_conf_s  ngx_http_addr_conf_t;
 
 typedef struct {
     ngx_http_addr_conf_t             *addr_conf;
+    
+    /*
+     * 在事件发生时，能快速获得main/svr/location
+     */
     ngx_http_conf_ctx_t              *conf_ctx;
 
 #if (NGX_HTTP_SSL || NGX_COMPAT)
@@ -348,6 +358,9 @@ typedef struct {
 #endif
 #endif
 
+    /*
+     * 1. 存放large_client_header_buffers.
+     */
     ngx_chain_t                      *busy;
     ngx_int_t                         nbusy;
 
@@ -454,6 +467,7 @@ struct ngx_http_request_s {
     /* ????为什么在http_core_handler时，它的值为0 */
     ngx_http_request_body_t          *request_body;
 
+    /* lingering close time */
     time_t                            lingering_time;
 
     /* 供限速使用 */
@@ -472,7 +486,7 @@ struct ngx_http_request_s {
     ngx_str_t                         uri;
     /* uri 里的参数 */
     ngx_str_t                         args;
-    /* ??? */
+    /* 扩展名: html/exe/txt */
     ngx_str_t                         exten;
     ngx_str_t                         unparsed_uri;
 
@@ -538,12 +552,15 @@ struct ngx_http_request_s {
    ngx_http_variable_value_t        *variables;
 
 #if (NGX_PCRE)
+    /* 正则表达式匹配所得的字符串 */
     ngx_uint_t                        ncaptures;
     int                              *captures;
     u_char                           *captures_data;
 #endif
 
+    /* 限速 */
     size_t                            limit_rate;
+    /* 多少字节后限速 */
     size_t                            limit_rate_after;
 
     /* used to learn the Apache compatible response length without a header */
@@ -564,11 +581,16 @@ struct ngx_http_request_s {
     ngx_http_cleanup_t               *cleanup;
 
     unsigned                          count:16;  /* 引用计数 */
+
+    /* 一个连接所最多能创建的subrequest的个数, 初始化为51 */
     unsigned                          subrequests:8;
+    
+    /* TODO: 用于aio ??*/
     unsigned                          blocked:8;
 
     unsigned                          aio:1;
 
+    /* ngx_http_state_e */
     unsigned                          http_state:4;
 
     /* URI with "/." and on Win32 with "//" */
@@ -578,6 +600,7 @@ struct ngx_http_request_s {
     unsigned                          quoted_uri:1;
 
     /* URI with "+" */
+    /* + 表示空格 */
     unsigned                          plus_in_uri:1;
 
     /* URI with " " */
@@ -589,9 +612,17 @@ struct ngx_http_request_s {
     unsigned                          valid_location:1;
     unsigned                          valid_unparsed_uri:1;
     unsigned                          uri_changed:1;
-    unsigned                          uri_changes:4; /* rewrite URL 的次数 */
+    /* rewrite URL 的次数, 初始化为最大可以rewrite的次数 */
+    unsigned                          uri_changes:4; 
 
     /* 所有request_body 放在一个buf里, 例如naxsi, waf的内容检查就可以因此而减少copy*/
+    /* 
+     * request_body_in_single_buffer：指示是否将请求
+     * 体完整的存储在一块连续的内存中， * 默认为off，
+     * 如果此指令被设置为on，则nginx会保证请求体在不大于
+     * client_body_buffer_size设置的值时，被存放在一块连
+     * 续的内存中，但超过大小时会被整个写入一个临时文件；
+     */
     unsigned                          request_body_in_single_buf:1;
     /* request body 放在文件里 */
     unsigned                          request_body_in_file_only:1;
@@ -602,7 +633,9 @@ struct ngx_http_request_s {
     unsigned                          request_body_file_log_level:3;
     unsigned                          request_body_no_buffering:1;
 
+    /* NGX_HTTP_SUBREQUEST_IN_MEMORY */
     unsigned                          subrequest_in_memory:1;
+    /* NGX_HTTP_SUBREQUEST_WAITED */
     unsigned                          waited:1;
 
 #if (NGX_HTTP_CACHE)
@@ -712,6 +745,8 @@ struct ngx_http_request_s {
      */
     u_char                           *uri_start;
     u_char                           *uri_end;
+
+    /* 扩展名 */
     u_char                           *uri_ext;
     u_char                           *args_start;
     u_char                           *request_start;
@@ -724,6 +759,7 @@ struct ngx_http_request_s {
     u_char                           *port_start;
     u_char                           *port_end;
 
+    /* http 版本号 */
     unsigned                          http_minor:16;
     unsigned                          http_major:16;
 };

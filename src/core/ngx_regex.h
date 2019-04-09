@@ -31,6 +31,7 @@ typedef struct {
     ngx_pool_t   *pool;
     ngx_int_t     options;
 
+    /* 正则表达式编译后的值 */
     ngx_regex_t  *regex;
     int           captures;
     int           named_captures;

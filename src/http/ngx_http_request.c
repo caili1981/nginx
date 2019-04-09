@@ -456,6 +456,7 @@ ngx_http_wait_request_handler(ngx_event_t *rev)
 
     size = cscf->client_header_buffer_size;
 
+    /* c->buffer是用来存放 client request */
     b = c->buffer;
 
     if (b == NULL) {
@@ -729,6 +730,10 @@ ngx_http_ssl_handshake(ngx_event_t *rev)
 
     size = hc->proxy_protocol ? sizeof(buf) : 1;
 
+    /* 
+     * MSG_PEEK : 只读buf，并不将其从tcp socket buf中移除 
+     * 这样下次recv时，仍然可以读取这个buf.
+     */
     n = recv(c->fd, (char *) buf, size, MSG_PEEK);
 
     err = ngx_socket_errno;
@@ -961,6 +966,7 @@ ngx_http_ssl_servername(ngx_ssl_conn_t *ssl_conn, int *ad, void *arg)
 
     hc = c->data;
 
+    /* SSL在解析到sni时，会设置virtual server */
     rc = ngx_http_find_virtual_server(c, hc->addr_conf->virtual_names, &host,
                                       NULL, &cscf);
 
@@ -1270,6 +1276,10 @@ ngx_http_process_request_uri(ngx_http_request_t *r)
 
     if (r->complex_uri || r->quoted_uri) {
 
+        /* 
+         * 如果uri里包含"\\", "%", 那么需要uri_decode 
+         * 所以需要新申请内存.
+         */
         r->uri.data = ngx_pnalloc(r->pool, r->uri.len + 1);
         if (r->uri.data == NULL) {
             ngx_http_close_request(r, NGX_HTTP_INTERNAL_SERVER_ERROR);
@@ -1657,6 +1667,10 @@ ngx_http_alloc_large_header_buffer(ngx_http_request_t *r,
         && (size_t) (r->header_in->pos - old)
                                      >= cscf->large_client_header_buffers.size)
     {
+        /* 
+         * 这意味着request_line的长度和header长度不能超过
+         * large_client_header_buffers.size
+         */
         return NGX_DECLINED;
     }
 
@@ -2296,7 +2310,12 @@ ngx_http_set_virtual_server(ngx_http_request_t *r, ngx_str_t *host)
     return NGX_OK;
 }
 
-
+/*
+ * http_request的main/srv/loc_conf是从http_connection中继承来的.
+ * http_connection又是从listen中继承来的. 但是这都是默认的server.
+ * 如果一个监听端口监听很多server(通过host来选择正确的svr).
+ * 那么默认server有可能是错的，需要通过host name来选择正确的srv.
+ */
 static ngx_int_t
 ngx_http_find_virtual_server(ngx_connection_t *c,
     ngx_http_virtual_names_t *virtual_names, ngx_str_t *host,
@@ -2928,6 +2947,8 @@ ngx_http_writer(ngx_http_request_t *r)
 
     if (r->buffered || r->postponed || (r == r->main && c->buffered)) {
 
+        /* postponed : 如果当前请求仍然有子请求 */
+
         if (!wev->delayed) {
             ngx_add_timer(wev, clcf->send_timeout);
         }
@@ -3329,6 +3350,13 @@ ngx_http_keepalive_handler(ngx_event_t *rev)
 
     ngx_log_debug0(NGX_LOG_DEBUG_HTTP, c->log, 0, "http keepalive handler");
 
+    /* 
+     * 在keepalive_handler之前，此连接有可能, 因为空闲连接不够而被
+     * ngx_drain_connection close掉.
+     * read/write event 都有可能timeout， 因此每个event handler
+     * 都是最先检查是否timeout,
+     * 如果是可重用连接的入口，例如keepalive，需要检查close handler.
+     */
     if (rev->timedout || c->close) {
         ngx_http_close_connection(c);
         return;

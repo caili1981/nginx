@@ -15,6 +15,10 @@
 
 
 typedef struct {
+    /*
+     *  每个http模块的命令都可以放在main/svr/loc处，因此
+     *  对每个模块来说, 需要创建三中conf. 分别存放在不同的地方.
+     */
     void        **main_conf;   /* 指的是http级别 */
     void        **srv_conf;    /* 指的的http之下的级别，如svr/upstream 等都服用这个指针 */
     void        **loc_conf;    /* loc 级别 */
@@ -26,6 +30,7 @@ typedef struct {
     ngx_int_t   (*postconfiguration)(ngx_conf_t *cf);
 
     void       *(*create_main_conf)(ngx_conf_t *cf);
+    /* TODO: 为什么main_conf需要一个init 函数 */
     char       *(*init_main_conf)(ngx_conf_t *cf, void *conf);
 
     void       *(*create_srv_conf)(ngx_conf_t *cf);

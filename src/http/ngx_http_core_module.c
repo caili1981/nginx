@@ -1340,6 +1340,8 @@ ngx_http_core_find_location(ngx_http_request_t *r)
 #endif
 
         /* look up nested locations */
+        ngx_log_debug0(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                       "goto nested location");
 
         rc = ngx_http_core_find_location(r);
     }
@@ -1357,7 +1359,7 @@ ngx_http_core_find_location(ngx_http_request_t *r)
         for (clcfp = pclcf->regex_locations; *clcfp; clcfp++) {
 
             ngx_log_debug1(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                           "test location: ~ \"%V\"", &(*clcfp)->name);
+                           "test regular location: ~ \"%V\"", &(*clcfp)->name);
 
             n = ngx_http_regex_exec(r, (*clcfp)->regex, &r->uri);
 
@@ -1411,7 +1413,7 @@ ngx_http_core_find_static_location(ngx_http_request_t *r,
         }
 
         ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
-                       "test location: \"%*s\"",
+                       "test static location: \"%*s\"",
                        (size_t) node->len, node->name);
 
         n = (len <= (size_t) node->len) ? len : node->len;
@@ -1431,6 +1433,9 @@ ngx_http_core_find_static_location(ngx_http_request_t *r,
                 r->loc_conf = node->inclusive->loc_conf;
                 rv = NGX_AGAIN;
 
+                ngx_log_debug2(NGX_LOG_DEBUG_HTTP, r->connection->log, 0,
+                               "goto inclusive location: \"%*s\"",
+                               (size_t) node->len, node->name);
                 node = node->tree;
                 uri += n;
                 len -= n;
@@ -2947,22 +2952,26 @@ ngx_http_core_location(ngx_conf_t *cf, ngx_command_t *cmd, void *dummy)
 
         if (len == 1 && mod[0] == '=') {
 
+            /* 精确匹配 */
             clcf->name = *name;
             clcf->exact_match = 1;
 
         } else if (len == 2 && mod[0] == '^' && mod[1] == '~') {
 
+            /* 优先于正则表达式的前缀匹配 */
             clcf->name = *name;
             clcf->noregex = 1;
 
         } else if (len == 1 && mod[0] == '~') {
 
+            /* 正则匹配 */
             if (ngx_http_core_regex_location(cf, clcf, name, 0) != NGX_OK) {
                 return NGX_CONF_ERROR;
             }
 
         } else if (len == 2 && mod[0] == '~' && mod[1] == '*') {
 
+            /* 不区分大小写的正则匹配 */
             if (ngx_http_core_regex_location(cf, clcf, name, 1) != NGX_OK) {
                 return NGX_CONF_ERROR;
             }
@@ -2974,6 +2983,7 @@ ngx_http_core_location(ngx_conf_t *cf, ngx_command_t *cmd, void *dummy)
         }
 
     } else {
+        /* 和if分支一样，只是 ~= 和前缀连一起 */
 
         name = &value[1];
 
@@ -3014,10 +3024,20 @@ ngx_http_core_location(ngx_conf_t *cf, ngx_command_t *cmd, void *dummy)
             clcf->name = *name;
 
             if (name->data[0] == '@') {
+                /* 内部重定向 */
                 clcf->named = 1;
             }
         }
     }
+
+#if 0 /* Added by Jack */
+    if (name->len && name->data) {
+        printf("handling location: %s\n", name->data);
+    } else {
+        printf("handling location: %s\n", "NULL");
+    }
+#endif
+
 
     pclcf = pctx->loc_conf[ngx_http_core_module.ctx_index];
 
@@ -3068,6 +3088,14 @@ ngx_http_core_location(ngx_conf_t *cf, ngx_command_t *cmd, void *dummy)
             return NGX_CONF_ERROR;
         }
     }
+
+#if 0  /*Added by Jack */
+    if (clcf->name.len && clcf->name.data) {
+        printf("add location: %s\n", clcf->name.data);
+    } else {
+        printf("handling location: %s\n", "NULL");
+    }
+#endif
 
     if (ngx_http_add_location(cf, &pclcf->locations, clcf) != NGX_OK) {
         return NGX_CONF_ERROR;

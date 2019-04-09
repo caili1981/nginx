@@ -25,16 +25,32 @@ struct ngx_listening_s {
 
     int                 type;
 
+    /* 
+     * 配置 backlog=number
+     * tcp backlog queue size 
+     */
     int                 backlog;
+    /* 
+     * 配置 rcvbuf=size
+     * tcp rcv/snd buffer size 
+     */
     int                 rcvbuf;
     int                 sndbuf;
 #if (NGX_HAVE_KEEPALIVE_TUNABLE)
+    /*
+     * 配置： so_keepalive=on|off|[keepidle]:[keepintvl]:[keepcnt]
+     */
     int                 keepidle;
     int                 keepintvl;
     int                 keepcnt;
 #endif
 
     /* handler of accepted connection */
+    /*
+     * - http   ngx_http_init_connection 
+     * - mail   ngx_mail_init_connection
+     * - stream ngx_stream_init_connection
+     */
     ngx_connection_handler_pt   handler;
 
     void               *servers;  /* array of ngx_http_in_addr_t, for example */
@@ -156,41 +172,74 @@ struct ngx_connection_s {
 
     ngx_socket_t        fd;
 
+    /* 
+     * 接收函数指针，不同的协议接收函数不一样 
+     * 例如: ngx_unix_recv/ngx_ssl_recv/ngx_udp_recv等
+     */
     ngx_recv_pt         recv;
     ngx_send_pt         send;
+    /*
+     * 发送和接收函数
+     * 和recv/send的区别是，recv_chain底层调用readv进行多片读取，
+     * 以减少系统调用次数
+     */
     ngx_recv_chain_pt   recv_chain;
     ngx_send_chain_pt   send_chain;
 
     ngx_listening_t    *listening;
 
+    /* 成功发送的数据, ngx_unix_send 函数在发送成功后会将sent更新 */
     off_t               sent;
 
     ngx_log_t          *log;
 
+    /* pool size 默认为cscf->connection_pool_size */
     ngx_pool_t         *pool;
 
+    /* socket 类型, SOCK_STREAM/SOCK_DGRAM */
     int                 type;
 
+    /* peer addr, 包括 port 和 addr */
     struct sockaddr    *sockaddr;
+    /* 16 字节 */
     socklen_t           socklen;
+    /* 192.168.101.1 */
     ngx_str_t           addr_text;
 
     ngx_str_t           proxy_protocol_addr;
     in_port_t           proxy_protocol_port;
 
 #if (NGX_SSL || NGX_COMPAT)
+    /* ssl连接相关，例如SSL_ctx, 回调函数等. */
     ngx_ssl_connection_t  *ssl;
 #endif
 
     ngx_udp_connection_t  *udp;
 
+    /* 
+     * 本地地址和端口，例如0.0.0.0和, 
+     * 调用ngx_connection_local_sockaddr可以将本地地址输出成字符串
+     */
     struct sockaddr    *local_sockaddr;
     socklen_t           local_socklen;
 
+    /* 
+     * ngx_connection_t在初始化时，会设置为 * client_header_buffer_size, 
+     * 此结构用来存放整个 client request header (request-line header-line)
+     * 因为一般的客户请求长度都小于此值, 
+     * 所以一般情况下整个请求头都放在buffer里。
+     */
     ngx_buf_t          *buffer;
 
+    /*
+     * 连接ngx_cycle->reusable_connections_queue
+     */
     ngx_queue_t         queue;
 
+    /* 
+     * c->number: 实际上是一个seq_id, 
+     * 每次新建连接时seq_id都会加1, log时，这个值会写在最前面 
+     */
     ngx_atomic_uint_t   number;
 
     /* 
@@ -203,20 +252,31 @@ struct ngx_connection_s {
 
     unsigned            log_error:3;     /* ngx_connection_log_error_e */
 
+    /* 所有连接的handler，都需要检查timedout */
     unsigned            timedout:1;
     unsigned            error:1;
     unsigned            destroyed:1;   /* 标志连接是否已经被销毁 */
 
     unsigned            idle:1;
+    /* 连接是否可复用, 如果是可复用连接，则此连接会在reusable_connections_queue 里*/
     unsigned            reusable:1;
+    /* 
+     * 对于一个连接，处于reusable状态时，可以将close设置为1，以此来关闭连接
+     * 因此此时的rev/wev->handler入口，需要检查close是否=1.
+     */
     unsigned            close:1;
-    unsigned            shared:1;
+    /* 对同一个server的udp连接，连接是可以复用的 */
+    unsigned            shared:1;   
 
     unsigned            sendfile:1;
+    /* SO_SNDLOWAT */
     unsigned            sndlowat:1;
+    /* TCP_NODELAY */
     unsigned            tcp_nodelay:2;   /* ngx_connection_tcp_nodelay_e */
+    /* TCP_NOPUSH */
     unsigned            tcp_nopush:2;    /* ngx_connection_tcp_nopush_e */
 
+    /* for HTTP2 */
     unsigned            need_last_buf:1;
 
 #if (NGX_HAVE_AIO_SENDFILE || NGX_COMPAT)

@@ -437,6 +437,9 @@ ngx_start_worker_processes(ngx_cycle_t *cycle, ngx_int_t n, ngx_int_t type)
         ch.slot = ngx_process_slot;
         ch.fd = ngx_processes[ngx_process_slot].channel[0];
 
+        /*
+         * 向所有子worker/cache子进程发送新创建的进程pid/slot/fd.
+         */
         ngx_pass_open_channel(cycle, &ch);
     }
 }
@@ -497,7 +500,9 @@ ngx_start_cache_manager_processes(ngx_cycle_t *cycle, ngx_uint_t respawn)
     ngx_pass_open_channel(cycle, &ch);
 }
 
-
+/*
+ * 通知其他进程，新start了一个work，以及它的pid/slot-id/channel-fd
+ */
 static void
 ngx_pass_open_channel(ngx_cycle_t *cycle, ngx_channel_t *ch)
 {
@@ -505,10 +510,11 @@ ngx_pass_open_channel(ngx_cycle_t *cycle, ngx_channel_t *ch)
 
     for (i = 0; i < ngx_last_process; i++) {
 
-        if (i == ngx_process_slot
+        if (i == ngx_process_slot  
             || ngx_processes[i].pid == -1
             || ngx_processes[i].channel[0] == -1)
         {
+            /* 当前正在创建的worker不需要通知，因为fork时已经携带了相关信息*/
             continue;
         }
 

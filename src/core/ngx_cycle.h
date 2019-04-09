@@ -53,6 +53,9 @@ struct ngx_cycle_s {
     ngx_uint_t                modules_n;
     ngx_uint_t                modules_used;    /* unsigned  modules_used:1; */
 
+    /*
+     * 可以复用的空闲连接，例如：keepalive时仍无数据
+     */
     ngx_queue_t               reusable_connections_queue;
     ngx_uint_t                reusable_connections_n;
 
@@ -75,9 +78,10 @@ struct ngx_cycle_s {
 
     ngx_cycle_t              *old_cycle;
 
+    /* 配置文件 */
     ngx_str_t                 conf_file;
     ngx_str_t                 conf_param;
-    ngx_str_t                 conf_prefix;
+    ngx_str_t                 conf_prefix;  
     ngx_str_t                 prefix;
     ngx_str_t                 lock_file;
     ngx_str_t                 hostname;

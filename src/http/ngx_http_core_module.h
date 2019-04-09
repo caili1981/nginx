@@ -158,11 +158,21 @@ typedef struct {
 
     ngx_http_phase_engine_t    phase_engine;
 
+    /* hash实际元素是: ngx_http_header_t */
     ngx_hash_t                 headers_in_hash;
 
+    /* 实际元素是: ngx_http_variable_t */
     ngx_hash_t                 variables_hash;
 
+    /* 
+     * 普通变量， 全匹配, 如host,
+     * set "$tmp_var" "tmp_var_value" 所设置的变量也会存放在这里
+     * set所设置的变量在脚本编译时(读取配置阶段)，直接会生成index.
+     * 在请求处理阶段，会直接通过index获得，而不需要从variables_hash获得。
+     */
     ngx_array_t                variables;         /* ngx_http_variable_t */
+
+    /* prefix 变量，前缀匹配，如cookie_/args_ */
     ngx_array_t                prefix_variables;  /* ngx_http_variable_t */
     ngx_uint_t                 ncaptures;
 
@@ -199,6 +209,26 @@ typedef struct {
 
     size_t                      connection_pool_size;
     size_t                      request_pool_size;
+
+    /* 
+     * 默认情况下，nginx用1k 的buffer存储 request, 
+     * 如果request 超过client_header_buffer_size, 
+     * 那么将使用large_client_header_buffers
+     * ngx_connection_t 在初始化时，就是使用的此值.
+     * 因此, 为提升http性能，应该妥善设置 client_header_buffer_size.
+     */
+
+    /*
+     * nginx http 报文头存储原理:
+     * 1. client header首先会存放在： 
+     *       r->connection->buffer 
+     *       buffer size = client_header_buffer_size;
+     * 2. 如若无法存放, 则会根据large_client_header_buffer
+     *    分配新的large_client_header_buffers. 存放于:
+     *       r->http_connection->busy (这是一个ngx_chain_t)
+     * 3. request-line 不能超过large_client_header_buffers->size;
+     * 4. 每一个header不能超过large_client_header_buffers->size.
+     */
     size_t                      client_header_buffer_size;
 
     ngx_bufs_t                  large_client_header_buffers;
@@ -326,8 +356,10 @@ struct ngx_http_core_loc_conf_s {
     unsigned      gzip_disable_degradation:2;
 #endif
 
+    /* 前缀匹配和精确匹配树 */
     ngx_http_location_tree_node_t   *static_locations;
 #if (NGX_PCRE)
+    /* reg数组 */
     ngx_http_core_loc_conf_t       **regex_locations;
 #endif
 
@@ -459,16 +491,38 @@ typedef struct {
     ngx_queue_t                      list;
 } ngx_http_location_queue_t;
 
-
+/*
+ * 多级树的数据结构
+ * 第一个字母构成一个二叉树.
+ * 如果第一个字母match上，那么就从这个node的tree再继续匹配子树.
+ * 算法演示:
+ * 初始化为空:
+ * - 加入： /a/b/c
+ *   - 树形节点
+ *     - /a/b/c
+ * - 加入:  /a/b
+ *   - 树形节点
+ *     - /a/b
+ *        - /c
+ * - 加入   /a/b/d
+ *   - 树形节点
+ *     - /a/b
+ *       - /d
+ *       - /c
+ *       注意，并没有把'/'单独抽成一个目录
+ */
 struct ngx_http_location_tree_node_s {
     ngx_http_location_tree_node_t   *left;
     ngx_http_location_tree_node_t   *right;
     ngx_http_location_tree_node_t   *tree;
 
+    /* 精确匹配的loc_conf */
     ngx_http_core_loc_conf_t        *exact;
+    /* nested loc */
     ngx_http_core_loc_conf_t        *inclusive;
 
     u_char                           auto_redirect;
+    /* 当前匹配长度 */
     u_char                           len;
     u_char                           name[1];
 };

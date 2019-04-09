@@ -16,6 +16,9 @@
  * 2.  请求处理未完成.
  * 这意味着有多个keepalive tcp 连接可以同时连接到server, 而不会出错.
  * 这个模块实际上是限制请求，而不是限制连接
+ * 注意如下区别:
+ * limit req 是限制request的发送速率 
+ * limit conn 是限制正在处理的请求.
  */
 
 typedef struct {

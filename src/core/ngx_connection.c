@@ -1258,7 +1258,12 @@ ngx_close_connection(ngx_connection_t *c)
     }
 }
 
-
+/*
+ * 当并发连接过大时，可以将reusable_connection挤掉。
+ * 这些reusable_connection包括：
+ * 1.  wait request时，读取数据失败，也就是说没有数据发送过来.
+ * 2.  keepalive时, 仍在等待新的连接。
+ */
 void
 ngx_reusable_connection(ngx_connection_t *c, ngx_uint_t reusable)
 {
@@ -1289,7 +1294,9 @@ ngx_reusable_connection(ngx_connection_t *c, ngx_uint_t reusable)
     }
 }
 
-
+/*
+ * close将可复用连接队列里的1-32连接
+ */
 static void
 ngx_drain_connections(ngx_cycle_t *cycle)
 {
@@ -1310,6 +1317,7 @@ ngx_drain_connections(ngx_cycle_t *cycle)
         ngx_log_debug0(NGX_LOG_DEBUG_CORE, c->log, 0,
                        "reusing connection");
 
+        /* 设置连接关闭，并调用相应handler */
         c->close = 1;
         c->read->handler(c->read);
     }

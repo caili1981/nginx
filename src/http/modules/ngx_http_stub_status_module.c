@@ -90,6 +90,8 @@ ngx_http_stub_status_handler(ngx_http_request_t *r)
     ngx_int_t          rc;
     ngx_buf_t         *b;
     ngx_chain_t        out;
+    ngx_str_t          srv_addr;
+    u_char             addr[NGX_SOCKADDR_STRLEN];
     ngx_atomic_int_t   ap, hn, ac, rq, rd, wr, wa;
 
     if (!(r->method & (NGX_HTTP_GET|NGX_HTTP_HEAD))) {
@@ -116,10 +118,13 @@ ngx_http_stub_status_handler(ngx_http_request_t *r)
         }
     }
 
+#if 0
     size = sizeof("Active connections:  \n") + NGX_ATOMIC_T_LEN
            + sizeof("server accepts handled requests\n") - 1
            + 6 + 3 * NGX_ATOMIC_T_LEN
            + sizeof("Reading:  Writing:  Waiting:  \n") + 3 * NGX_ATOMIC_T_LEN;
+#endif
+    size = 1000;
 
     b = ngx_create_temp_buf(r->pool, size);
     if (b == NULL) {
@@ -137,8 +142,20 @@ ngx_http_stub_status_handler(ngx_http_request_t *r)
     wr = *ngx_stat_writing;
     wa = *ngx_stat_waiting;
 
-    b->last = ngx_sprintf(b->last, "Current PID: %uA \n", ngx_pid);
-    b->last = ngx_sprintf(b->last, "Parent  PID: %uA \n", ngx_parent);
+    srv_addr.len = NGX_SOCKADDR_STRLEN;
+    srv_addr.data = addr;
+    b->last = ngx_sprintf(b->last, "Connection status\n");
+    b->last = ngx_sprintf(b->last, "  c->number:   %uA [%uA]\n", 
+                          r->connection->number, 
+                          ngx_atomic_fetch_add(ngx_connection_counter, 0));
+    if (ngx_connection_local_sockaddr(r->connection, &srv_addr, 1) == NGX_OK) {
+        b->last = ngx_sprintf(b->last, "  Server addr[:port]: %V\n", &srv_addr);
+    } else {
+        b->last = ngx_sprintf(b->last, "  Server addr: ERROR\n");
+    }
+    b->last = ngx_sprintf(b->last, "  Client addr: %V\n", &r->connection->addr_text);
+    b->last = ngx_sprintf(b->last, "  Current PID: %uA \n", ngx_pid);
+    b->last = ngx_sprintf(b->last, "  Parent  PID: %uA \n", ngx_parent);
 
     b->last = ngx_sprintf(b->last, "Active connections: %uA \n", ac);
 

@@ -33,6 +33,9 @@
     https://docs.nginx.com/nginx/admin-guide/
   - nginx内存池的申请.
     - 每个不同的buffer对应不同的内存池？？对应的原则是什么？
+  - nginx cache manager 机制
+  - nginx named location
+  - nginx nested location
     
 
 ### 主要特性
@@ -70,6 +73,13 @@
         }
         ```
       - 普通表达式按最长匹配优先.
+    - 前缀匹配(明确指定，它优先于正则表达式
+      - 实例
+        ```
+        location ^~ /a/hello.html {
+            echo "hello equal match";
+        }
+        ```
     - 正则表达式.
       - 实例
         ```
@@ -87,7 +97,22 @@
             echo "/a/b/c/";
         }
         ```
+    - named location.
+      > 作为内部重定向用，不在查找范围之内.
+      - 实例
+        ```
+        location / {
+            error_page 404 = @fallback;
+        }
+
+        location @fallback {
+            proxy_pass http://backend;
+        }
+        ```
+    - 注意, nginx 没有后缀匹配
+    - 注意, nginx 支持location嵌套.
     - [参考文档](https://blog.csdn.net/fengmo_q/article/details/6683377)
+    - [参考文档](https://www.cnblogs.com/lidabo/p/4169396.html)
     
   - 配置执行顺序
     - create_config
@@ -101,6 +126,117 @@
     - merge_loc_conf函数一定要写, 否则会出现配置不对的现象.
     - complex_value的str，不一定是以\0结尾. 
     
+### ngixn 配置读取
+  - 基本概念
+    - 命令
+      - 每一行开始第一个单词.
+      - 一个模块可以对应多个命令. 
+        - http/server/location, 都可以有本模块的命令.
+        - 如果一个命令在多个block下，需要merge. 
+          - merge 就是根据父配置决定子配置. 
+            - server需要从http merge. 
+            - location需要从server merge
+            - nested location 也需要从上级merge.
+          - 例如: server/location 下的都有同一个命令，但是参数不同，这时候就需要merge来决定，以决定哪个block拥有优先级.
+    - 参数
+      - 命令之后，‘;'之前称为参数.
+    - block
+      - '{}'之间称为block.
+      - 一个block又可以包含多个block. 
+        > 例如server包含多个location.
+    - conf_ctx
+      - 四级指针: 'void ****';
+      - cycle->conf_ctx是配置的核心成员, 所有配置都保存在这个指针里.
+      - 层级关系.
+        - core
+          - http
+            - ngx_http_core_ctx_t  
+            - server
+              - location
+            - upstream
+            - map
+          - stream
+      - core
+        - 指向长度为ngx_max_module的(void *)数组，数组里的东西各模块不同。
+        - 只有core_module才会非空. 例如http/log/event等，他们的模块类型为'NGX_CORE_MODULE'
+      - http
+        - 获得所有模块http级别的配置.
+          - cycle->conf_ctx[ngx_http_module.index]->main_conf
+          - http-core 模块
+            - ngx_http_core_main_conf_t
+            - 里面包含里server数组, 指向server配置. 每个server的配置为ngx_http_core_srv_conf_t
+      - server
+        - 获得所有模块在某个server的配置.
+          - cycle->conf_ctx[ngx_http_module.index]->main_conf[ngx_http_core_module.ctx_index]->servers[n]->srv_conf
+          - http-core 模块
+            - ngx_http_core_srv_conf_t
+            - 里面包含里location的双指针.
+      - location
+        - 长度: ngx_http_max_module
+  - 配置读取函数
+     - char *(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
+       - cf
+         - 输入参数
+         - 当前命令的数据表示
+           - args->elts[0]
+             > 命令
+           - args->elts[1] ...
+             > 参数
+       - cmd
+         - 指向此命令的定义
+       - conf
+         - 输出参数
+         - 模块所对应的配置块的指针
+         - 例如: ngx_http_xxx_loc_conf_t
+         - 上级调用会将此配置块指针放在指定位置.
+     - ngx_conf_parse
+       - parse一个新文件
+       - parse一个'{}'所表示的block
+     - ngx_conf_handler
+       - ngx_conf_parse出一行命令，会调用此函数.
+       - 初始化此命令行的数据结构.
+       - 调用命令行处理函数，执行此命令.
+     - 调用栈分析
+       - ngx_conf_parse 
+         > 读取整个配置文件.
+         - ngx_conf_handler 
+           > 找到http命令,初始化
+           - ngx_http_block
+             > 读取http块的配置.
+             - ngx_conf_parse
+               > 继续读取http {} block的配置.
+               - ngx_conf_handler
+                 > 找到server的命令，初始化.
+                 - ngx_http_core_server
+                   > 读取server的配置.
+                   - ngx_conf_parse
+                     > 读取server {} block的配置
+                     - ngx_conf_handler
+                       > 找到location块
+                       - ngx_conf_parse
+                         > 读取location块的配置.
+                         - ngx_conf_handler
+                           > 找到utm命令.
+                           - ngx_http_utm 
+                             > 读取utm命令.
+         
+       ```
+       #0  ngx_http_utm (cf=0x7fffffffe050, cmd=0x7359e0 <ngx_http_utm_commands>, conf=0x17f4420)
+         at ./src/ext/ngx_http_utm_module/src/ngx_http_utm_module.c:479
+       #1  0x000000000042a761 in ngx_conf_handler (last=0, cf=0x7fffffffe050) at src/core/ngx_conf_file.c:463
+       #2  ngx_conf_parse (cf=cf@entry=0x7fffffffe050, filename=filename@entry=0x0) at src/core/ngx_conf_file.c:319
+       #3  0x0000000000450175 in ngx_http_core_location (cf=0x7fffffffe050, cmd=<optimized out>, dummy=<optimized out>) at src/http/ngx_http_core_module.c:3080
+       #4  0x000000000042a761 in ngx_conf_handler (last=1, cf=0x7fffffffe050) at src/core/ngx_conf_file.c:463
+       #5  ngx_conf_parse (cf=cf@entry=0x7fffffffe050, filename=filename@entry=0x0) at src/core/ngx_conf_file.c:319
+       #6  0x0000000000450c29 in ngx_http_core_server (cf=0x7fffffffe050, cmd=<optimized out>, dummy=<optimized out>) at src/http/ngx_http_core_module.c:2837
+       #7  0x000000000042a761 in ngx_conf_handler (last=1, cf=0x7fffffffe050) at src/core/ngx_conf_file.c:463
+       #8  ngx_conf_parse (cf=cf@entry=0x7fffffffe050, filename=filename@entry=0x0) at src/core/ngx_conf_file.c:319
+       #9  0x000000000044b12d in ngx_http_block (cf=0x7fffffffe050, cmd=<optimized out>, conf=<optimized out>) at src/http/ngx_http.c:237
+       #10 0x000000000042a761 in ngx_conf_handler (last=1, cf=0x7fffffffe050) at src/core/ngx_conf_file.c:463
+       #11 ngx_conf_parse (cf=cf@entry=0x7fffffffe050, filename=filename@entry=0x78d2a0) at src/core/ngx_conf_file.c:319
+       #12 0x0000000000427d49 in ngx_init_cycle (old_cycle=old_cycle@entry=0x7fffffffe210) at src/core/ngx_cycle.c:275
+       #13 0x000000000041618a in main (argc=<optimized out>, argv=<optimized out>) at src/core/nginx.c:311
+       ```
 ### nginx启动/处理流程
   - 读配置.
   - 建立监听端口.
@@ -446,6 +582,12 @@
       - 不是以链表的形式，而是以内存块偏移的形式进行组织.
         - 所有bucket都指向同一片内存（偏移不同).
         - 通过连续内存，提高性能.
+      - 实例:
+        - 解析http header
+          - 通过header name找到ngx_http_header_t
+          - 此结构保存此header name在ngx_http_request_t中的偏移.
+          - 通过handler执行相关处理函数.
+            - 如host, 会hook上正确的virtual server.
         
     - ngx_hash_combined_t 
       - 支持前/后通配符匹配. 实际上是查找三次.   
@@ -714,6 +856,111 @@
     2. 调用nginx -s  reopen用来打开日志文件，这样nginx会把新日志信息写入这个新的文件中
 
   - 这样完成了日志的切割工作，同时切割过程中没有日志的丢失。
+
+### nginx 时间管理
+ - ngx time 模块实现要点:
+   - 原理
+     - ngx的事件管理模块是由read/write构成.
+     - 为避免频发的系统调用，ngx 时间通过缓存进行管理.
+       - 缓存分为64个时间缓存slot.
+       - write 负责更新时间. 并将 ngx_cached_time 移动到下一个slot.
+       - read 读取ngx_cached_time所指向的时间.
+     - 可能存在多个writer更新时间, 所以write有锁.
+     - 时间字符串在每次更新时间时都会缓存, 供log 等其他模块使用
+     - ngx_time_update 在每个event 循环里都会进行调用
+   - [参考文档](https://blog.csdn.net/Mrzhangjwei/article/details/77150335)
+
+### nginx 文件操作.
+  - AIO
+    - AIO 背后的基本思想是允许进程发起很多 I/O 操作，而不用阻塞或等待任何操作完成。
+    - 稍后或在接收到 I/O 操作完成的通知时，进程就可以检索 I/O 操作的结果。
+    - aio 原理
+      - nginx aio是通过eventfd来实现的.
+      - 通过epoll监控eventfd，就能监听eventfd所关联的事件.
+        - read
+          - 通过SYS_io_submit将FD挂入eventFD的监听队列.
+          - 事件到达时，event FD就能够得到通知。
+          - ngx_epoll_eventfd_handler通过io_getevents就能获得事件和事件相关的pvt data.
+  - sendfile
+    - 绕过userspace, 直接发送整个文件给对方.
+    - TODO：是不是也可以用来接收文件???
+  - directio
+    - 绕过内核内存空间，直接DMA到用户内存空间.
+    - 适合大文件的操作. 小文件适合用sendfile
+    - 实例
+      > 如上典型的配置中，文件大小小于8M采用 send file。大于8M采用directio的多线程异步IO
+          ```
+          location /video/ {
+              sendfile       on;
+              aio            on;
+              directio       8m;
+          }
+          ```
+  - open file cache.
+    - 将openfile的FD缓存起来，以实现文件快速打开和关闭，节约系统资源。
+  - read ahead
+    - 在打开FD时，就load文件内容。也就是文件的预取.
+    - POSIX_FADV_SEQUENTIAL
+
+### nginx TCP socket 
+  - 惊群问题.
+    - 多个worker 进程监听在同一个fd上，如果一个新连接到来, 内核会唤醒所有被accept阻塞的进程.
+      - 无效调度会显著增加.
+    - 解决办法.
+      - accept lock.
+        - 每个worker thread只有抓住accept lock, 才能监听accept事件.
+  - SO_REUSEADDR
+    - 如果在一个socket绑定到某一地址和端口之前设置了其SO_REUSEADDR的属性，那么除非本socket与产生了尝试与另一个socket绑定到完全相同的源地址和源端口组合的冲突，否则的话这个socket就可以成功的绑定这个地址端口对。这听起来似乎和之前一样。但是其中的关键字是完全。SO_REUSEADDR主要改变了系统对待通配符IP地址冲突的方式。
+    - 如果不用SO_REUSEADDR的话，如果我们将socketA绑定到0.0.0.0:21，那么任何将本机其他socket绑定到端口21的举动（如绑定到192.168.1.1:21）都会导致EADDRINUSE错误。因为0.0.0.0是一个通配符IP地址，意味着任意一个IP地址，所以任何其他本机上的IP地址都被系统认为已被占用。如果设置了SO_REUSEADDR选项，因为0.0.0.0:21和192.168.1.1:21并不是完全相同的地址端口对（其中一个是通配符IP地址，另一个是一个本机的具体IP地址），所以这样的绑定是可以成功的。需要注意的是，无论socketA和socketB初始化的顺序如何，只要设置了SO_REUSEADDR，绑定都会成功；而只要没有设置SO_REUSEADDR，绑定都不会成功。
+  - reuse port选项.
+    - 多个worker进程, 可以绑定同一个监听端口.
+    - 内核实现调度，不会出现惊群问题.
+    - 可以用来解决惊群问题.
+  - TCP_FASTOPEN
+    - TCP 快速打开选项.
+    - 可以在客户端未发送最后ack之前就发送数据.
+    - [参考链接](https://baike.baidu.com/item/TCP%E5%BF%AB%E9%80%9F%E6%89%93%E5%BC%80/22748901?fr=aladdin)
+  - defer accept 选项.
+    - 服务器端设置defer accept
+      - 只有收到数据时才会唤醒被accept阻塞的nginx服务器。通过这种方式，减少一次服务器的调度时间.
+    - 客户端设置defer accept，
+      - ack回随数据一起发送出去，从而省掉一次ack的传送时延.
+    - [参考链接](https://blog.csdn.net/for_tech/article/details/54175571)
+  - linger close 选项.
+    - 延迟关闭. 
+    - 内核关闭socket的行为
+      - read buffer 不为空，发送rst. 丢弃write buffer数据。
+        - 如果content phase之前出错，发送错误给客户端, 此时read buffer数据不为空. 客户端无法获取错误信息.
+      - read buffer 为空, 等待write buffer数据发送完毕。4此分手，关闭socket.
+    - [参考链接](https://blog.csdn.net/wangpengqi/article/details/17245889)
+  - backlog size
+    - 设置linux 内核tcp backlog queue的大小.
+  - keepalive 
+    - interval/cnt/time.
+  - SO_SNDLOWAT/SO_RCVLOWAT
+    - SO_RCVLOWAT和SO_SNDLOWAT选项分别表示TCP接收缓冲区和发送缓冲区的低水位标记。它们一般被I/O复用系统调用用来判断socket是否可读或可写。
+    - 当TCP接收缓冲区中可读数据的总数大于其低水位标记时，I/O复用系统调用将通知应用程序可以从对应的socket上读取数据；
+    - 当TCP发送缓冲区中的空闲空间（可以写入数据的空间）大于其低水位标记时，I/O复用系统调用将通知应用程序可以往对应的socket上写入数据。
+    - 其作用和postpone_output命令一样。
+  - TCP_NODELAY
+    - 关闭或者开启nagle算法.
+  - TCP_CORK
+    - TCP_NOPUSH in windows.
+    - 增强版本的nagle算法，阻塞小包.
+  - IP_RECVDSTADDR
+    - UDP 报文选项.
+    - 在recvmsg函数调用时，能够返回对端ip地址, 以便socket进行区分.
+  - IP_PKTINFO
+    - UDP 报文选项.
+    - 在recvmsg/sendmsg时，会发送in_pktinfo数据结构.
+
+### SSL 流程
+  - ngx_http_add_listening 时设置tcp accept连接.
+    - ngx_http_init_connection 时设置设置rev->handler = ngx_http_ssl_handshake
+  - sni 解析
+    - 在多个server共享一台server时，通过sni可以使得SSL连接时能够获取到正确的证书.
+    - 设置openssl的sni callback为ngx_http_find_virtual_server
+
 ### 调用栈
   ```
   (gdb) bt

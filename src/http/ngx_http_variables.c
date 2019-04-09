@@ -713,6 +713,7 @@ ngx_http_get_variable(ngx_http_request_t *r, ngx_str_t *name, ngx_uint_t key)
     }
 
     if (n != cmcf->prefix_variables.nelts) {
+        /* 找到prefix 变量 */
         if (v[n].get_handler(r, vv, (uintptr_t) name) == NGX_OK) {
             return vv;
         }

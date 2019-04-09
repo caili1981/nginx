@@ -14,13 +14,19 @@
 
 
 typedef struct {
+    /* hash元素的数据结构 */
     void             *value;
+
+    /* len+name: 实际的key 值 */
     u_short           len;
     u_char            name[1];
 } ngx_hash_elt_t;
 
 
 typedef struct {
+    /* 
+     * bucket[key]指向hash_key = key的冲突链的首地址
+     */
     ngx_hash_elt_t  **buckets;
     ngx_uint_t        size;
 } ngx_hash_t;
@@ -54,7 +60,9 @@ typedef struct {
     ngx_hash_t       *hash;
     ngx_hash_key_pt   key;
 
+    /* bucket桶个数 */
     ngx_uint_t        max_size;
+    /* key的最大长度 */
     ngx_uint_t        bucket_size;
 
     char             *name;
@@ -91,6 +99,7 @@ typedef struct {
 
 
 typedef struct {
+    /* hash/key 是为了能找到后来的header头的名字 */
     ngx_uint_t        hash;
     ngx_str_t         key;
     ngx_str_t         value;

@@ -34,6 +34,7 @@ typedef ngx_int_t (*ngx_http_get_variable_pt) (ngx_http_request_t *r,
 /* 变量不需要被hash */
 #define NGX_HTTP_VAR_NOHASH       8
 #define NGX_HTTP_VAR_WEAK         16
+/* prefix 变量, 如 cookie_/args_ 等 */
 #define NGX_HTTP_VAR_PREFIX       32
 
 

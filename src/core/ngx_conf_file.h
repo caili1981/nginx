@@ -115,10 +115,13 @@ typedef char *(*ngx_conf_handler_pt)(ngx_conf_t *cf,
 
 struct ngx_conf_s {
     char                 *name;
+    /*
+     * cf->args->elts[0] 存放当前命令
+     * cf->args->elts[1] 存放命令的参数
+     */
     ngx_array_t          *args;  
-    /*cf->args->elts[0] 存放当前命令
-      cf->args->elts[1] 存放命令的参数*/
 
+    /* 总配置块 */
     ngx_cycle_t          *cycle;
     ngx_pool_t           *pool;
     ngx_pool_t           *temp_pool;

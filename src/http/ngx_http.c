@@ -4,6 +4,11 @@
  * Copyright (C) Nginx, Inc.
  */
 
+/*
+ *  模块简要:
+ *  parse http {} block 配置, 并添加server, listening
+ */
+
 
 #include <ngx_config.h>
 #include <ngx_core.h>
@@ -234,7 +239,11 @@ ngx_http_block(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 
     cf->module_type = NGX_HTTP_MODULE;
     cf->cmd_type = NGX_HTTP_MAIN_CONF;
-    rv = ngx_conf_parse(cf, NULL);
+    /* 
+     * 传入NULL, 代表继续本配置文件的读取 
+     * 在这里表示读取server的location.
+     */
+    rv = ngx_conf_parse(cf, NULL);  
 
     if (rv != NGX_CONF_OK) {
         goto failed;
@@ -278,20 +287,27 @@ ngx_http_block(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
 
         clcf = cscfp[s]->ctx->loc_conf[ngx_http_core_module.ctx_index];
 
+        /* 将location 排序，并找出named/regex的位置 */
         if (ngx_http_init_locations(cf, cscfp[s], clcf) != NGX_OK) {
             return NGX_CONF_ERROR;
         }
 
+        /* 生成静态配置查找的多维树 */
         if (ngx_http_init_static_location_trees(cf, clcf) != NGX_OK) {
             return NGX_CONF_ERROR;
         }
     }
 
 
+    /* 初始化nginx phase array */
     if (ngx_http_init_phases(cf, cmcf) != NGX_OK) {
         return NGX_CONF_ERROR;
     }
 
+    /* 
+     * 将所有headers(host/connection/...) 生成一个hash表 
+     * 以便于请求到达时通过hash查找
+     */
     if (ngx_http_init_headers_in_hash(cf, cmcf) != NGX_OK) {
         return NGX_CONF_ERROR;
     }
@@ -323,6 +339,7 @@ ngx_http_block(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
     *cf = pcf;
 
 
+    /* 将phase_handler hook上去 */
     if (ngx_http_init_phase_handlers(cf, cmcf) != NGX_OK) {
         return NGX_CONF_ERROR;
     }
@@ -684,6 +701,7 @@ ngx_http_init_locations(ngx_conf_t *cf, ngx_http_core_srv_conf_t *cscf,
         return NGX_OK;
     }
 
+    /* 排序, 特殊location(noname, named,regex) 放在最后*/
     ngx_queue_sort(locations, ngx_http_cmp_locations);
 
     named = NULL;
@@ -701,6 +719,7 @@ ngx_http_init_locations(ngx_conf_t *cf, ngx_http_core_srv_conf_t *cscf,
 
         clcf = lq->exact ? lq->exact : lq->inclusive;
 
+        /* 递归初始化 */
         if (ngx_http_init_locations(cf, NULL, clcf) != NGX_OK) {
             return NGX_ERROR;
         }
@@ -735,10 +754,12 @@ ngx_http_init_locations(ngx_conf_t *cf, ngx_http_core_srv_conf_t *cscf,
     }
 
     if (q != ngx_queue_sentinel(locations)) {
+        /* 从noname 将queue分成两半 */
         ngx_queue_split(locations, q, &tail);
     }
 
     if (named) {
+        /* 如果有named, 继续将queue劈成两半 */
         clcfp = ngx_palloc(cf->pool,
                            (n + 1) * sizeof(ngx_http_core_loc_conf_t *));
         if (clcfp == NULL) {
@@ -764,6 +785,7 @@ ngx_http_init_locations(ngx_conf_t *cf, ngx_http_core_srv_conf_t *cscf,
 #if (NGX_PCRE)
 
     if (regex) {
+        /* 将剩余的queue继续劈成两半 */
 
         clcfp = ngx_palloc(cf->pool,
                            (r + 1) * sizeof(ngx_http_core_loc_conf_t *));
@@ -908,6 +930,8 @@ ngx_http_cmp_locations(const ngx_queue_t *one, const ngx_queue_t *two)
         /* shift no named locations to the end */
         return -1;
     }
+
+    /* first->noname == second->noname now*/
 
     if (first->noname || second->noname) {
         /* do not sort no named locations */

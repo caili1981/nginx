@@ -163,7 +163,9 @@ ngx_conf_parse(ngx_conf_t *cf, ngx_str_t *filename)
     ngx_buf_t         buf;
     ngx_conf_file_t  *prev, conf_file;
     enum {
+        /* 文件 */
         parse_file = 0,
+        /* {} */
         parse_block,
         parse_param
     } type;
