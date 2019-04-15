@@ -31,7 +31,12 @@ typedef ngx_int_t (*ngx_http_get_variable_pt) (ngx_http_request_t *r,
 #define NGX_HTTP_VAR_NOCACHEABLE  2
 /* 变量使用索引读取 */
 #define NGX_HTTP_VAR_INDEXED      4
-/* 变量不需要被hash */
+/*
+ * 变量不需要放入cmcf->variables_hash 
+ * 加入到variables_hash里，通过ngx_http_get_variable就能快速获取值
+ * 如果设置了NGX_HTTP_VAR_NOHASH，则无法通过ngx_http_get_variable获得变量.
+ * 如果脚本里使用到这类变量，都是通过index获得的.
+ */
 #define NGX_HTTP_VAR_NOHASH       8
 #define NGX_HTTP_VAR_WEAK         16
 /* prefix 变量, 如 cookie_/args_ 等 */

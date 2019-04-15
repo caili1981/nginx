@@ -267,7 +267,12 @@ typedef struct {
     ngx_http_server_name_t    *regex;
 } ngx_http_virtual_names_t;
 
-
+/*
+ * ngx_http_init_connection时，会根据local-addr找到所对应的
+ * ngx_http_addr_conf_t, 从而设置hc->addr_conf
+ * 在ngx_http_find_virtual_server时，会根据host && virtual_names
+ * 找到对应的virtual_server, 并获得srv_conf & loc_conf.
+ */
 struct ngx_http_addr_conf_s {
     /* the default server configuration for this address:port */
     ngx_http_core_srv_conf_t  *default_server;
@@ -302,7 +307,25 @@ typedef struct {
     ngx_uint_t                 naddrs;
 } ngx_http_port_t;
 
-
+/*
+ * 层次关系如下:
+ * - port
+ *   - addr1
+ *     - srv1
+ *     - srv2
+ *   - addr2
+ * - 80
+ *   - 192.168.101.2
+ *     - srv1(cscf)
+ *     - srv2(cscf) 
+ *   - 192.168.100.2
+ *   - 127.0.0.0.1
+ */
+/*
+ * ngx_http_conf_port_t: 配置
+ * ngx_http_port_t: http request 处理
+ * ngx_http_conf_addr_t: 配置
+ */
 typedef struct {
     ngx_int_t                  family;
     in_port_t                  port;

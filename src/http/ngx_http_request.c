@@ -3769,6 +3769,11 @@ ngx_http_free_request(ngx_http_request_t *r, ngx_int_t rc)
             linger.l_onoff = 1;
             linger.l_linger = 0;
 
+            /* 
+             * l_onoff =0: close socket立即返回，但是要等send buffer发送完才关闭.
+             * l_onoff = 1 && l_linger = 0时，如果send buffer有数据发送rst.
+             * l_onoff !=0 && l_linger != 0, 延迟关闭.
+             */
             if (setsockopt(r->connection->fd, SOL_SOCKET, SO_LINGER,
                            (const void *) &linger, sizeof(struct linger)) == -1)
             {
@@ -3794,6 +3799,7 @@ ngx_http_free_request(ngx_http_request_t *r, ngx_int_t rc)
     pool = r->pool;
     r->pool = NULL;
 
+    /* r->pool 是随着r释放的，c->pool是随着c释放的 */
     ngx_destroy_pool(pool);
 }
 

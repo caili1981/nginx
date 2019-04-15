@@ -12,9 +12,7 @@
 
 ngx_os_io_t  ngx_io;
 
-
 static void ngx_drain_connections(ngx_cycle_t *cycle);
-
 
 ngx_listening_t *
 ngx_create_listening(ngx_conf_t *cf, struct sockaddr *sockaddr,
@@ -1192,6 +1190,7 @@ ngx_close_connection(ngx_connection_t *c)
     }
 
     if (!c->shared) {
+        /* shared 代表到同一个目的地址的udp connection可能被多次复用*/
         if (ngx_del_conn) {
             ngx_del_conn(c, NGX_CLOSE_EVENT);
 
@@ -1217,6 +1216,10 @@ ngx_close_connection(ngx_connection_t *c)
     c->read->closed = 1;
     c->write->closed = 1;
 
+    /* 
+     * 可复用的连接都是处于active，这个时候已经是free了，
+     * 就不用设置可复用了 
+     */
     ngx_reusable_connection(c, 0);
 
     log_error = c->log_error;

@@ -15,6 +15,18 @@
 
 typedef struct ngx_listening_s  ngx_listening_t;
 
+/*
+ * 结构关系:
+ * - ngx_listening_t
+ *   - servers(ngx_http_port_t)
+ *     - addr (ngx_http_in_addr_t) (array)  ===> 一个listen socket对应一系列ip.
+ *       - addr (ip地址)
+ *         > ngx_http_init_connection时，会通过本地地址比较, 从而找到相应的addr
+ *         - default_server
+ *         - virtual_names
+ *           - names(ngx_hash_combined_t)
+ *           - regex(正则表达式)
+ */
 struct ngx_listening_s {
     ngx_socket_t        fd;
 

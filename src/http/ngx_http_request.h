@@ -548,6 +548,7 @@ struct ngx_http_request_s {
     /* 
      * http 请求的变量值, ngx_http_create_request函数里进行创建，
      * 其长度是core main config里决定的 
+     * 指向长度为cmcf->variables.nelts的数组.
      */
    ngx_http_variable_value_t        *variables;
 

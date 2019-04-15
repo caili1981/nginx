@@ -35,6 +35,7 @@
     - 每个不同的buffer对应不同的内存池？？对应的原则是什么？
   - nginx cache manager 机制
   - nginx named location
+    - 内部重定向用，外部client不能通过名称访问.
   - nginx nested location
     
 
@@ -98,7 +99,8 @@
         }
         ```
     - named location.
-      > 作为内部重定向用，不在查找范围之内.
+      - 作为内部重定向用，不在查找范围之内.
+      - named/internel location不会继承原request的ctx.
       - 实例
         ```
         location / {
@@ -874,7 +876,8 @@
   - AIO
     - AIO 背后的基本思想是允许进程发起很多 I/O 操作，而不用阻塞或等待任何操作完成。
     - 稍后或在接收到 I/O 操作完成的通知时，进程就可以检索 I/O 操作的结果。
-    - aio 原理
+    - aio默认通过eventfd实现，也可以通过thread-pool来实现.
+    - eventfd 原理
       - nginx aio是通过eventfd来实现的.
       - 通过epoll监控eventfd，就能监听eventfd所关联的事件.
         - read
@@ -912,6 +915,7 @@
   - SO_REUSEADDR
     - 如果在一个socket绑定到某一地址和端口之前设置了其SO_REUSEADDR的属性，那么除非本socket与产生了尝试与另一个socket绑定到完全相同的源地址和源端口组合的冲突，否则的话这个socket就可以成功的绑定这个地址端口对。这听起来似乎和之前一样。但是其中的关键字是完全。SO_REUSEADDR主要改变了系统对待通配符IP地址冲突的方式。
     - 如果不用SO_REUSEADDR的话，如果我们将socketA绑定到0.0.0.0:21，那么任何将本机其他socket绑定到端口21的举动（如绑定到192.168.1.1:21）都会导致EADDRINUSE错误。因为0.0.0.0是一个通配符IP地址，意味着任意一个IP地址，所以任何其他本机上的IP地址都被系统认为已被占用。如果设置了SO_REUSEADDR选项，因为0.0.0.0:21和192.168.1.1:21并不是完全相同的地址端口对（其中一个是通配符IP地址，另一个是一个本机的具体IP地址），所以这样的绑定是可以成功的。需要注意的是，无论socketA和socketB初始化的顺序如何，只要设置了SO_REUSEADDR，绑定都会成功；而只要没有设置SO_REUSEADDR，绑定都不会成功。
+    - [参考链接](://blog.csdn.net/yaokai_assultmaster/article/details/68951150)
   - reuse port选项.
     - 多个worker进程, 可以绑定同一个监听端口.
     - 内核实现调度，不会出现惊群问题.

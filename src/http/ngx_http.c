@@ -1435,6 +1435,7 @@ ngx_http_optimize_servers(ngx_conf_t *cf, ngx_http_core_main_conf_t *cmcf,
 #endif
                )
             {
+                /* 将addr的所有server_name加入到addr->hash/wc_head/wc_tail/regex表中 */
                 if (ngx_http_server_names(cf, cmcf, &addr[a]) != NGX_OK) {
                     return NGX_ERROR;
                 }
@@ -1724,7 +1725,11 @@ ngx_http_init_listening(ngx_conf_t *cf, ngx_http_conf_port_t *port)
     return NGX_OK;
 }
 
-
+/*
+ *  创建一个ngx_listening_t数据结构,
+ *  1. 并将其handler设置为ngx_http_init_connection
+ *  2. 初始化其他域.
+ */
 static ngx_listening_t *
 ngx_http_add_listening(ngx_conf_t *cf, ngx_http_conf_addr_t *addr)
 {
