@@ -824,8 +824,14 @@
       - master进程也会通过这种方式向子进程发送信号. 例如channel发送失败时. 或者SIGWINCH时
     - socketpair
       - master向worker thread发送NGX_CMD_QUIT/NGX_CMD_TERM/NGX_CMD_REOPEN消息.
-  - 多进程户操作.
-    - 配置升级
+  - 多进程操作.
+    - 配置升级.
+      - 主进程释放老配置。
+      - 将新配置从新读取到内存中.
+      - fork新的worker thread.
+      - 向老进程发送winchg信号，老进程不再处理新连接。处理完成后，就退出。
+      - master进程不变. 共享内存不变。
+    - 应用程序升级
       - echo "必须确认nginx启动命令是/usr/sbin/nginx -c /usr/local/nginx/conf/nginx.conf, 否则会报错"
       - 步骤:
         1. kill -USR2 `cat /usr/local/nginx/logs/nginx.pid`
