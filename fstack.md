@@ -1,5 +1,21 @@
 ### nginx 
-ngx_unix_recv
+
+### 处理流程
+- 报文处理
+  - main_loop
+    - process_packets
+      - ff_veth_input
+        - 
+- 事件处理
+  - ngx_unix_recv
+    - recv
+      - ff_recv_from
+        - kern_recv_it
+        
+recv (sockfd=2050, buf=0x2fdf3b0, len=1024, flags=0) at src/event/modules/ngx_ff_module.c:356
+#1  0x000000000049f343 in recv (__flags=0, __n=1024, __buf=0x2fdf3b0, __fd=<optimized out>) at /usr/include/x86_64-linux-gnu/bits/socket2.h:44
+#2  ngx_unix_recv (c=0x7f0338b741e0, buf=0x2fdf3b0 "\210_\002=\003\177", size=1024) at src/os/unix/ngx_recv.c:69
+#3  0x00000000004b046c in ngx_http_wait_request_handler (rev=0x7f03380830f0) at src/http/ngx_http_request.c:429
 
 
 ### 调用栈
