@@ -1,12 +1,21 @@
 ### nginx 
 
 ### 处理流程
+- 初始化
+  - ngx_spawn_process
+    - ff_run
+      - ff_dpdk_run
+        - rte_eal_mp_remote_launch
+          - main_loop
 - 报文处理
+  > 此阶段将报文送入f-stack的用户态协议栈.
   - main_loop
     - process_packets
       - ff_veth_input
-        - 
+        - ff_veth_process_packet
+          - ether_input
 - 事件处理
+  > 此阶段将报文，从用户态协议栈取出, 并处理.
   - ngx_unix_recv
     - recv
       - ff_recv_from
