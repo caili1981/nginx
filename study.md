@@ -990,5 +990,27 @@
   #14 0x0000000000404458 in main (argc=<optimized out>, argv=<optimized out>) at src/core/nginx.c:359
   (gdb)
   ```
+### 调优.
+- 负载不均衡.
+  - 默认nginx并不是很均衡. 在开启mutex on之后，负载才会变得均衡.
+- sysctl
+  - 增大文件描述符
+    - ulimit -n 999999
+      - 将进程的文件描述符增大.
+  - 增大backlog队列
+    - 当打小文件测试时，backlog队列太小，系统会将其视作syn-flood攻击. 
+    - syn backlog
+      - net.ipv4.tcp_max_syn_backlog = 100000
+    - 网卡backlog
+      - net.core.netdev_max_backlog = 1000
+  - 缩短fin-wait时间
+    - 如果不缩短这个时间，tcp客户端的60000万个端口将很快被用光，从而导致连接建立不起来.
+    - net.ipv4.tcp_fin_timeout = 2
+  - RPS/RFS
+    - 这个能帮助系统提高cache命中率.
+  - LRO
+    - 网卡能将TCP报文聚合，例如(data + fin两片报文可以被聚合成一片，送往服务器),从而提升服务器的性能.
+    - ethtool -K eth0 查看.
+
 ### 参考文献
   [Nginx如何解决惊群效应](https://blog.csdn.net/wan_hust/article/details/38958545)
